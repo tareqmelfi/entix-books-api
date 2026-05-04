@@ -116,7 +116,6 @@ model Organization {
   projects        Project[]
   fixedAssets     FixedAsset[]
   expenses        Expense[]
-  projects        Project[]
 
   @@index([slug])
 }
