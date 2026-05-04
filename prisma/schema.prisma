@@ -116,6 +116,8 @@ model Organization {
   projects        Project[]
   fixedAssets     FixedAsset[]
   expenses        Expense[]
+  quotes          Quote[]
+  vouchers        Voucher[]
 
   @@index([slug])
 }
@@ -204,6 +206,8 @@ model Contact {
   org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   invoices  Invoice[]
   bills     Bill[]
+  quotes    Quote[]
+  vouchers  Voucher[]
 
   @@index([orgId])
   @@index([orgId, type])
@@ -394,6 +398,7 @@ model Product {
   taxRate      TaxRate?      @relation(fields: [taxRateId], references: [id])
   invoiceLines InvoiceLine[]
   billLines    BillLine[]
+  quoteLines   QuoteLine[]
 
   @@unique([orgId, sku])
   @@index([orgId])
@@ -423,6 +428,7 @@ model TaxRate {
   billLines    BillLine[]
   products     Product[]
   expenses     Expense[]
+  quoteLines   QuoteLine[]
 
   @@index([orgId])
 }
@@ -530,6 +536,97 @@ model Project {
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, code])
+}
+
+// ============================================================================
+// 11.5 · QUOTES (sales price quotes · convert to invoice)
+// ============================================================================
+
+model Quote {
+  id              String      @id @default(cuid())
+  orgId           String
+  contactId       String
+  quoteNumber     String
+  status          QuoteStatus @default(DRAFT)
+  issueDate       DateTime
+  validUntil      DateTime
+  currency        String      @default("SAR")
+  exchangeRate    Decimal     @default(1) @db.Decimal(18, 8)
+  subtotal        Decimal     @default(0) @db.Decimal(18, 4)
+  taxTotal        Decimal     @default(0) @db.Decimal(18, 4)
+  discountTotal   Decimal     @default(0) @db.Decimal(18, 4)
+  total           Decimal     @default(0) @db.Decimal(18, 4)
+  notes           String?
+  termsConditions String?
+  convertedInvoiceId String?  @unique
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact Contact      @relation(fields: [contactId], references: [id])
+  lines   QuoteLine[]
+
+  @@unique([orgId, quoteNumber])
+  @@index([orgId, status])
+}
+
+enum QuoteStatus {
+  DRAFT
+  SENT
+  VIEWED
+  ACCEPTED
+  REJECTED
+  CONVERTED
+  EXPIRED
+}
+
+model QuoteLine {
+  id          String  @id @default(cuid())
+  quoteId     String
+  productId   String?
+  description String
+  quantity    Decimal @db.Decimal(18, 4)
+  unitPrice   Decimal @db.Decimal(18, 4)
+  discount    Decimal @default(0) @db.Decimal(18, 4)
+  taxRateId   String?
+  subtotal    Decimal @db.Decimal(18, 4)
+
+  quote   Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id])
+  taxRate TaxRate? @relation(fields: [taxRateId], references: [id])
+}
+
+// ============================================================================
+// 11.6 · VOUCHERS (Receipt voucher = سند قبض · Payment voucher = سند صرف)
+// ============================================================================
+
+model Voucher {
+  id            String        @id @default(cuid())
+  orgId         String
+  type          VoucherType
+  number        String
+  date          DateTime
+  contactId     String?       // customer for RECEIPT · supplier for PAYMENT
+  amount        Decimal       @db.Decimal(18, 4)
+  currency      String        @default("SAR")
+  paymentMethod PaymentMethod
+  reference     String?       // bank ref / check #
+  notes         String?
+  invoiceId     String?       // optional · auto-update invoice.amountPaid
+  billId        String?       // optional · auto-update bill.amountPaid
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact Contact?     @relation(fields: [contactId], references: [id])
+
+  @@unique([orgId, number])
+  @@index([orgId, type, date])
+}
+
+enum VoucherType {
+  RECEIPT  // سند قبض · cash IN from customer
+  PAYMENT  // سند صرف · cash OUT to supplier
 }
 
 // ============================================================================
