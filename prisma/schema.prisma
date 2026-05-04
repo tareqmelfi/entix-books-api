@@ -12,23 +12,79 @@ datasource db {
 }
 
 // ============================================================================
-// 1 · IDENTITY (Logto-backed · users come from Logto JWT · we mirror locally)
+// 1 · IDENTITY (better-auth backed · email/password · sessions · OAuth ready)
 // ============================================================================
 
 model User {
-  id           String   @id @default(cuid())
-  logtoUserId  String   @unique // sub claim from Logto JWT
-  email        String   @unique
-  name         String?
-  phone        String?
-  avatarUrl    String?
-  locale       String   @default("ar") // ar | en
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  name          String?
+  image         String?
+  // entix-specific
+  phone         String?
+  locale        String   @default("ar") // ar | en
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  memberships  OrgMembership[]
+  memberships   OrgMembership[]
+  sessions      AuthSession[]
+  authAccounts  AuthAccount[]
 
   @@index([email])
+}
+
+// better-auth session (server-side)
+model AuthSession {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  ipAddress String?
+  userAgent String?
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_session")
+}
+
+// better-auth account (password storage + OAuth providers)
+model AuthAccount {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?   @db.Text
+  refreshToken          String?   @db.Text
+  idToken               String?   @db.Text
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+  @@map("auth_account")
+}
+
+// better-auth email verification + password reset tokens
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("auth_verification")
 }
 
 model Organization {

@@ -8,7 +8,7 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { secureHeaders } from 'hono/secure-headers'
 import { prisma } from './db.js'
-import { requireAuth, requireOrg } from './auth.js'
+import { auth, requireAuth, requireOrg } from './auth.js'
 import { contactsRoutes } from './routes/contacts.js'
 import { orgsRoutes } from './routes/orgs.js'
 import { invoicesRoutes } from './routes/invoices.js'
@@ -57,6 +57,9 @@ app.get('/health', async (c) => {
   }
 })
 
+// ── better-auth handler · /api/auth/* (sign-up · sign-in · sign-out · session) ──
+app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw))
+
 // ── Auth-only routes ────────────────────────────────────────────────────────
 app.route('/me', meRoutes)
 app.route('/orgs', orgsRoutes)
@@ -86,9 +89,7 @@ app.notFound((c) => c.json({ error: 'not_found', path: c.req.path }, 404))
 
 const port = Number(process.env.PORT || 3000)
 console.log(`[entix-books-api] starting on :${port}`)
-console.log(
-  `[entix-books-api] auth mode: ${process.env.LOGTO_ENDPOINT ? 'logto' : 'DEMO (no Logto)'}`,
-)
+console.log(`[entix-books-api] auth: better-auth · email/password`)
 
 serve({
   fetch: app.fetch,
