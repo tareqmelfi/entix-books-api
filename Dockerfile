@@ -41,5 +41,6 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-# Run migrations + start server
-CMD npx prisma migrate deploy && node dist/server.js
+# Push schema (creates/updates tables from prisma/schema.prisma) + start server
+# Using db push instead of migrate deploy because we don't ship migration files in V0.1
+CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss && node dist/server.js"]
