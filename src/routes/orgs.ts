@@ -69,6 +69,48 @@ orgsRoutes.get('/:id', async (c) => {
   return c.json({ ...m.org, role: m.role })
 })
 
+// PATCH /orgs/:id — update org info (OWNER/ADMIN only)
+const updateOrgSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  legalName: z.string().optional().nullable(),
+  country: z.string().length(2).optional(),
+  baseCurrency: z.string().length(3).optional(),
+  fiscalYearStart: z.number().int().min(1).max(12).optional(),
+  vatNumber: z.string().optional().nullable(),
+  crNumber: z.string().optional().nullable(),
+  zatcaEnabled: z.boolean().optional(),
+  logoUrl: z.string().url().optional().nullable(),
+})
+
+orgsRoutes.patch('/:id', zValidator('json', updateOrgSchema), async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const m = await prisma.orgMembership.findUnique({
+    where: { userId_orgId: { userId: auth.userId, orgId } },
+  })
+  if (!m) return c.json({ error: 'not_a_member' }, 403)
+  if (m.role !== 'OWNER' && m.role !== 'ADMIN') return c.json({ error: 'forbidden' }, 403)
+  const data = c.req.valid('json')
+  const org = await prisma.organization.update({ where: { id: orgId }, data })
+  return c.json({ ...org, role: m.role })
+})
+
+// GET /orgs/:id/members
+orgsRoutes.get('/:id/members', async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const m = await prisma.orgMembership.findUnique({
+    where: { userId_orgId: { userId: auth.userId, orgId } },
+  })
+  if (!m) return c.json({ error: 'not_a_member' }, 403)
+  const members = await prisma.orgMembership.findMany({
+    where: { orgId },
+    include: { user: { select: { id: true, email: true, name: true, image: true, createdAt: true } } },
+    orderBy: { createdAt: 'asc' },
+  })
+  return c.json({ members })
+})
+
 // Default Saudi/US chart of accounts (minimal · 5-digit codes)
 async function seedDefaultAccounts(orgId: string) {
   const accounts: Array<{
