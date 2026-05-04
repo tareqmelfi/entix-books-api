@@ -22,6 +22,7 @@ import { agentRoutes } from './routes/agent.js'
 import { dashboardRoutes } from './routes/dashboard.js'
 import { billsRoutes } from './routes/bills.js'
 import { bankAccountsRoutes } from './routes/bank-accounts.js'
+import { branchesRoutes, costCentersRoutes, projectsRoutes, fixedAssetsRoutes, productsRoutes } from './routes/orgScoped.js'
 
 const app = new Hono()
 
@@ -95,6 +96,11 @@ orgScoped.route('/agent', agentRoutes)
 orgScoped.route('/dashboard', dashboardRoutes)
 orgScoped.route('/bills', billsRoutes)
 orgScoped.route('/bank-accounts', bankAccountsRoutes)
+orgScoped.route('/branches', branchesRoutes)
+orgScoped.route('/cost-centers', costCentersRoutes)
+orgScoped.route('/projects', projectsRoutes)
+orgScoped.route('/fixed-assets', fixedAssetsRoutes)
+orgScoped.route('/products', productsRoutes)
 app.route('/api', orgScoped)
 
 // ── Error handler ──────────────────────────────────────────────────────────
