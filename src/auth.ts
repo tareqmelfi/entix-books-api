@@ -54,6 +54,16 @@ export const auth = betterAuth({
     requireEmailVerification: false, // V0.1 — turn on later when SMTP is wired
   },
 
+  // Google OAuth · only enabled when both env vars are set
+  socialProviders: process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
+    ? {
+        google: {
+          clientId: process.env.GOOGLE_CLIENT_ID,
+          clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+        },
+      }
+    : {},
+
   trustedOrigins: [
     'https://entix.io',
     'https://www.entix.io',

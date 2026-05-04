@@ -57,6 +57,14 @@ app.get('/health', async (c) => {
   }
 })
 
+// What auth providers does the frontend show buttons for?
+app.get('/auth-providers', (c) =>
+  c.json({
+    emailPassword: true,
+    google: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET),
+  }),
+)
+
 // ── better-auth handler · /api/auth/* (sign-up · sign-in · sign-out · session) ──
 app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw))
 
