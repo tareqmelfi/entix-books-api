@@ -20,6 +20,8 @@ import { vouchersRoutes } from './routes/vouchers.js'
 import { ocrRoutes } from './routes/ocr.js'
 import { agentRoutes } from './routes/agent.js'
 import { dashboardRoutes } from './routes/dashboard.js'
+import { billsRoutes } from './routes/bills.js'
+import { bankAccountsRoutes } from './routes/bank-accounts.js'
 
 const app = new Hono()
 
@@ -91,6 +93,8 @@ orgScoped.route('/vouchers', vouchersRoutes)
 orgScoped.route('/ocr', ocrRoutes)
 orgScoped.route('/agent', agentRoutes)
 orgScoped.route('/dashboard', dashboardRoutes)
+orgScoped.route('/bills', billsRoutes)
+orgScoped.route('/bank-accounts', bankAccountsRoutes)
 app.route('/api', orgScoped)
 
 // ── Error handler ──────────────────────────────────────────────────────────
