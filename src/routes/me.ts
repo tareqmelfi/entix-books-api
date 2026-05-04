@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { Prisma } from '@prisma/client'
 import { requireAuth } from '../auth.js'
 import { prisma } from '../db.js'
 
@@ -50,17 +51,29 @@ meRoutes.post('/bootstrap', async (c) => {
     },
   })
 
-  // Seed default chart of accounts (20 accounts) + tax rates
+  // Seed default chart of accounts + tax rates + sample data so the user has something to play with
   await seedDefaultAccounts(org.id)
-  await prisma.taxRate.createMany({
-    data: [
-      { orgId: org.id, name: 'VAT 15%', rate: '0.15', type: 'STANDARD' },
-      { orgId: org.id, name: 'VAT Exempt', rate: '0', type: 'EXEMPT' },
-      { orgId: org.id, name: 'VAT 0%', rate: '0', type: 'ZERO_RATED' },
-    ],
-  })
+  const [vat15] = await Promise.all([
+    prisma.taxRate.create({ data: { orgId: org.id, name: 'VAT 15%', rate: '0.15', type: 'STANDARD' } }),
+    prisma.taxRate.create({ data: { orgId: org.id, name: 'VAT Exempt', rate: '0', type: 'EXEMPT' } }),
+    prisma.taxRate.create({ data: { orgId: org.id, name: 'VAT 0%', rate: '0', type: 'ZERO_RATED' } }),
+  ])
+  await seedDemoData(org.id, vat15.id)
 
   return c.json({ org, role: 'OWNER', created: true }, 201)
+})
+
+// DELETE /me/account-data — wipe my org's data + leave the user (for retesting)
+meRoutes.delete('/account-data', async (c) => {
+  const auth = c.get('auth')
+  const memberships = await prisma.orgMembership.findMany({
+    where: { userId: auth.userId, role: 'OWNER' },
+    select: { orgId: true },
+  })
+  for (const m of memberships) {
+    await prisma.organization.delete({ where: { id: m.orgId } })
+  }
+  return c.json({ wiped: memberships.length })
 })
 
 async function seedDefaultAccounts(orgId: string) {
@@ -93,4 +106,112 @@ async function seedDefaultAccounts(orgId: string) {
     { code: '58000', name: 'Depreciation', nameAr: 'الإهلاك', type: 'EXPENSE' },
   ]
   await prisma.account.createMany({ data: accounts.map((a) => ({ ...a, orgId })) })
+}
+
+// Seeds 3 sample contacts · 1 invoice · 2 expenses · so the new user has data to test
+async function seedDemoData(orgId: string, vat15Id: string) {
+  const [c1, c2, c3] = await Promise.all([
+    prisma.contact.create({
+      data: {
+        orgId,
+        type: 'CUSTOMER',
+        displayName: 'شركة الأمل التجارية',
+        legalName: 'Al Amal Trading Co.',
+        email: 'info@alamal.sa',
+        phone: '+966555000111',
+        vatNumber: '300000000000003',
+        country: 'SA',
+        city: 'الرياض',
+      },
+    }),
+    prisma.contact.create({
+      data: {
+        orgId,
+        type: 'CUSTOMER',
+        displayName: 'مؤسسة النور',
+        email: 'sales@alnoor.sa',
+        phone: '+966555000222',
+        country: 'SA',
+        city: 'جدة',
+      },
+    }),
+    prisma.contact.create({
+      data: {
+        orgId,
+        type: 'SUPPLIER',
+        displayName: 'شركة المواد الخام',
+        email: 'orders@rawmat.sa',
+        phone: '+966555000333',
+        vatNumber: '310000000000003',
+        country: 'SA',
+        city: 'الدمام',
+      },
+    }),
+  ])
+
+  // Sample invoice for c1 (one line · 5000 SAR + 15% VAT)
+  const today = new Date()
+  const dueDate = new Date(today)
+  dueDate.setDate(dueDate.getDate() + 30)
+  await prisma.invoice.create({
+    data: {
+      orgId,
+      contactId: c1.id,
+      invoiceNumber: `INV-${today.getFullYear()}-00001`,
+      status: 'SENT',
+      issueDate: today,
+      dueDate,
+      currency: 'SAR',
+      exchangeRate: new Prisma.Decimal(1),
+      subtotal: new Prisma.Decimal(5000),
+      taxTotal: new Prisma.Decimal(750),
+      discountTotal: new Prisma.Decimal(0),
+      total: new Prisma.Decimal(5750),
+      notes: 'فاتورة تجريبية · يمكن تعديلها أو حذفها',
+      lines: {
+        create: [
+          {
+            description: 'خدمة استشارية',
+            quantity: new Prisma.Decimal(1),
+            unitPrice: new Prisma.Decimal(5000),
+            discount: new Prisma.Decimal(0),
+            taxRateId: vat15Id,
+            subtotal: new Prisma.Decimal(5750),
+          },
+        ],
+      },
+    },
+  })
+
+  // 2 sample expenses
+  await prisma.expense.createMany({
+    data: [
+      {
+        orgId,
+        number: `EXP-${today.getFullYear()}-0001`,
+        date: today,
+        category: 'Rent',
+        description: 'إيجار المكتب',
+        amount: new Prisma.Decimal(5000),
+        currency: 'SAR',
+        paymentMethod: 'BANK_TRANSFER',
+        vendorName: 'مؤجر العقار',
+        taxAmount: new Prisma.Decimal(0),
+        total: new Prisma.Decimal(5000),
+      },
+      {
+        orgId,
+        number: `EXP-${today.getFullYear()}-0002`,
+        date: today,
+        category: 'Utilities',
+        description: 'كهرباء وماء',
+        amount: new Prisma.Decimal(1200),
+        currency: 'SAR',
+        paymentMethod: 'CASH',
+        vendorName: 'شركة الكهرباء',
+        taxAmount: new Prisma.Decimal(0),
+        total: new Prisma.Decimal(1200),
+      },
+    ],
+  })
 }

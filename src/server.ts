@@ -14,6 +14,7 @@ import { orgsRoutes } from './routes/orgs.js'
 import { invoicesRoutes } from './routes/invoices.js'
 import { accountsRoutes } from './routes/accounts.js'
 import { meRoutes } from './routes/me.js'
+import { expensesRoutes } from './routes/expenses.js'
 
 const app = new Hono()
 
@@ -79,6 +80,7 @@ orgScoped.use('*', requireOrg)
 orgScoped.route('/contacts', contactsRoutes)
 orgScoped.route('/invoices', invoicesRoutes)
 orgScoped.route('/accounts', accountsRoutes)
+orgScoped.route('/expenses', expensesRoutes)
 app.route('/api', orgScoped)
 
 // ── Error handler ──────────────────────────────────────────────────────────

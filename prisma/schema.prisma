@@ -115,6 +115,8 @@ model Organization {
   costCenters     CostCenter[]
   projects        Project[]
   fixedAssets     FixedAsset[]
+  expenses        Expense[]
+  projects        Project[]
 
   @@index([slug])
 }
@@ -421,6 +423,7 @@ model TaxRate {
   invoiceLines InvoiceLine[]
   billLines    BillLine[]
   products     Product[]
+  expenses     Expense[]
 
   @@index([orgId])
 }
@@ -531,7 +534,38 @@ model Project {
 }
 
 // ============================================================================
-// 12 · FIXED ASSETS
+// 12 · EXPENSES (cash · daily entries)
+// ============================================================================
+
+model Expense {
+  id             String        @id @default(cuid())
+  orgId          String
+  number         String
+  date           DateTime
+  category       String        // Rent · Utilities · Salaries · Supplies · Travel · Other · ...
+  description    String?
+  amount         Decimal       @db.Decimal(18, 4)
+  currency       String        @default("SAR")
+  paymentMethod  PaymentMethod
+  vendorName     String?       // free-text · or link to a Contact later
+  reference      String?       // bank reference / receipt #
+  taxRateId      String?
+  taxAmount      Decimal       @default(0) @db.Decimal(18, 4)
+  total          Decimal       @db.Decimal(18, 4)
+  receiptUrl     String?       // R2 / S3 url of scanned receipt
+  notes          String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  taxRate  TaxRate?     @relation(fields: [taxRateId], references: [id])
+
+  @@unique([orgId, number])
+  @@index([orgId, date])
+}
+
+// ============================================================================
+// 13 · FIXED ASSETS
 // ============================================================================
 
 model FixedAsset {
