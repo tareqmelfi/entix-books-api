@@ -9,7 +9,8 @@ RUN apk add --no-cache openssl
 
 COPY package*.json ./
 COPY prisma ./prisma
-RUN npm install --no-audit --no-fund
+# Override Coolify's NODE_ENV=production · we need devDeps (typescript, tsx) for build
+RUN NODE_ENV=development npm install --include=dev --no-audit --no-fund
 
 COPY tsconfig.json ./
 COPY src ./src
