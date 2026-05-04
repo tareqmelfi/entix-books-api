@@ -1,0 +1,499 @@
+// Entix Books · Database schema
+// Wave + Wafeq killer · multi-tenant SaaS · KSA + US + ME
+// Generated 2026-05-04 · v0.1
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// 1 · IDENTITY (Logto-backed · users come from Logto JWT · we mirror locally)
+// ============================================================================
+
+model User {
+  id           String   @id @default(cuid())
+  logtoUserId  String   @unique // sub claim from Logto JWT
+  email        String   @unique
+  name         String?
+  phone        String?
+  avatarUrl    String?
+  locale       String   @default("ar") // ar | en
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships  OrgMembership[]
+
+  @@index([email])
+}
+
+model Organization {
+  id              String   @id @default(cuid())
+  slug            String   @unique // url-safe handle
+  name            String
+  legalName       String?
+  country         String   @default("SA") // ISO 3166-1 alpha-2
+  baseCurrency    String   @default("SAR") // ISO 4217
+  fiscalYearStart Int      @default(1) // month 1-12
+  vatNumber       String?  // KSA: 15-digit · US: EIN
+  crNumber        String?  // KSA: commercial registration
+  zatcaEnabled    Boolean  @default(false)
+  logoUrl         String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  memberships     OrgMembership[]
+  branches        Branch[]
+  contacts        Contact[]
+  accounts        Account[]
+  invoices        Invoice[]
+  bills           Bill[]
+  journals        JournalEntry[]
+  products        Product[]
+  taxes           TaxRate[]
+  bankAccounts    BankAccount[]
+  costCenters     CostCenter[]
+  projects        Project[]
+  fixedAssets     FixedAsset[]
+
+  @@index([slug])
+}
+
+model OrgMembership {
+  id        String   @id @default(cuid())
+  userId    String
+  orgId     String
+  role      OrgRole  @default(VIEWER)
+  createdAt DateTime @default(now())
+
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@index([orgId])
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  ACCOUNTANT
+  VIEWER
+}
+
+// ============================================================================
+// 2 · CHART OF ACCOUNTS
+// ============================================================================
+
+model Account {
+  id          String      @id @default(cuid())
+  orgId       String
+  code        String      // 1000 · 1100 · etc
+  name        String
+  nameAr      String?
+  type        AccountType
+  subtype     String?     // bank · receivable · payable · ...
+  parentId    String?
+  description String?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  org         Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  parent      Account?      @relation("AccountTree", fields: [parentId], references: [id])
+  children    Account[]     @relation("AccountTree")
+  journalLines JournalLine[]
+
+  @@unique([orgId, code])
+  @@index([orgId, type])
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+// ============================================================================
+// 3 · CONTACTS (customers, suppliers, both)
+// ============================================================================
+
+model Contact {
+  id            String   @id @default(cuid())
+  orgId         String
+  type          ContactType
+  displayName   String
+  legalName     String?
+  email         String?
+  phone         String?
+  vatNumber     String?
+  crNumber      String?
+  addressLine1  String?
+  addressLine2  String?
+  city          String?
+  region        String?
+  country       String   @default("SA")
+  postalCode    String?
+  notes         String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invoices  Invoice[]
+  bills     Bill[]
+
+  @@index([orgId])
+  @@index([orgId, type])
+}
+
+enum ContactType {
+  CUSTOMER
+  SUPPLIER
+  BOTH
+}
+
+// ============================================================================
+// 4 · INVOICES (sales)
+// ============================================================================
+
+model Invoice {
+  id              String        @id @default(cuid())
+  orgId           String
+  contactId       String
+  invoiceNumber   String
+  status          InvoiceStatus @default(DRAFT)
+  issueDate       DateTime
+  dueDate         DateTime
+  currency        String        @default("SAR")
+  exchangeRate    Decimal       @default(1) @db.Decimal(18, 8)
+  subtotal        Decimal       @default(0) @db.Decimal(18, 4)
+  taxTotal        Decimal       @default(0) @db.Decimal(18, 4)
+  discountTotal   Decimal       @default(0) @db.Decimal(18, 4)
+  total           Decimal       @default(0) @db.Decimal(18, 4)
+  amountPaid      Decimal       @default(0) @db.Decimal(18, 4)
+  notes           String?
+  termsConditions String?
+  // ZATCA Phase 2
+  zatcaUuid       String?       @unique
+  zatcaQr         String?       @db.Text
+  zatcaXml        String?       @db.Text
+  zatcaStatus     String?       // CLEARED | REPORTED | REJECTED | PENDING
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  org       Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact   Contact       @relation(fields: [contactId], references: [id])
+  lines     InvoiceLine[]
+  payments  Payment[]
+
+  @@unique([orgId, invoiceNumber])
+  @@index([orgId, status])
+  @@index([orgId, contactId])
+}
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  VIEWED
+  PAID
+  PARTIAL
+  OVERDUE
+  CANCELLED
+}
+
+model InvoiceLine {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  productId   String?
+  description String
+  quantity    Decimal @db.Decimal(18, 4)
+  unitPrice   Decimal @db.Decimal(18, 4)
+  discount    Decimal @default(0) @db.Decimal(18, 4)
+  taxRateId   String?
+  subtotal    Decimal @db.Decimal(18, 4)
+
+  invoice  Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product  Product? @relation(fields: [productId], references: [id])
+  taxRate  TaxRate? @relation(fields: [taxRateId], references: [id])
+}
+
+// ============================================================================
+// 5 · BILLS (purchases)
+// ============================================================================
+
+model Bill {
+  id           String     @id @default(cuid())
+  orgId        String
+  contactId    String
+  billNumber   String
+  status       BillStatus @default(DRAFT)
+  issueDate    DateTime
+  dueDate      DateTime
+  currency     String     @default("SAR")
+  exchangeRate Decimal    @default(1) @db.Decimal(18, 8)
+  subtotal     Decimal    @default(0) @db.Decimal(18, 4)
+  taxTotal     Decimal    @default(0) @db.Decimal(18, 4)
+  total        Decimal    @default(0) @db.Decimal(18, 4)
+  amountPaid   Decimal    @default(0) @db.Decimal(18, 4)
+  notes        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact  Contact      @relation(fields: [contactId], references: [id])
+  lines    BillLine[]
+  payments Payment[]
+
+  @@unique([orgId, billNumber])
+  @@index([orgId, status])
+}
+
+enum BillStatus {
+  DRAFT
+  RECEIVED
+  PAID
+  PARTIAL
+  OVERDUE
+  CANCELLED
+}
+
+model BillLine {
+  id          String  @id @default(cuid())
+  billId      String
+  productId   String?
+  description String
+  quantity    Decimal @db.Decimal(18, 4)
+  unitPrice   Decimal @db.Decimal(18, 4)
+  taxRateId   String?
+  subtotal    Decimal @db.Decimal(18, 4)
+
+  bill     Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  product  Product? @relation(fields: [productId], references: [id])
+  taxRate  TaxRate? @relation(fields: [taxRateId], references: [id])
+}
+
+// ============================================================================
+// 6 · PAYMENTS
+// ============================================================================
+
+model Payment {
+  id            String        @id @default(cuid())
+  invoiceId     String?
+  billId        String?
+  bankAccountId String?
+  amount        Decimal       @db.Decimal(18, 4)
+  currency      String        @default("SAR")
+  method        PaymentMethod
+  reference     String?
+  notes         String?
+  paidAt        DateTime
+  createdAt     DateTime      @default(now())
+
+  invoice     Invoice?     @relation(fields: [invoiceId], references: [id])
+  bill        Bill?        @relation(fields: [billId], references: [id])
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
+}
+
+enum PaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CARD
+  STC_PAY
+  MADA
+  CHECK
+  OTHER
+}
+
+// ============================================================================
+// 7 · PRODUCTS / SERVICES / INVENTORY
+// ============================================================================
+
+model Product {
+  id          String      @id @default(cuid())
+  orgId       String
+  sku         String?
+  name        String
+  nameAr      String?
+  description String?
+  type        ProductType @default(SERVICE)
+  unitPrice   Decimal     @default(0) @db.Decimal(18, 4)
+  costPrice   Decimal     @default(0) @db.Decimal(18, 4)
+  stockQty    Decimal     @default(0) @db.Decimal(18, 4)
+  reorderQty  Decimal?    @db.Decimal(18, 4)
+  taxRateId   String?
+  incomeAccountId  String?
+  expenseAccountId String?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  taxRate      TaxRate?      @relation(fields: [taxRateId], references: [id])
+  invoiceLines InvoiceLine[]
+  billLines    BillLine[]
+
+  @@unique([orgId, sku])
+  @@index([orgId])
+}
+
+enum ProductType {
+  SERVICE
+  GOOD
+  INVENTORY
+}
+
+// ============================================================================
+// 8 · TAX RATES
+// ============================================================================
+
+model TaxRate {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String   // "VAT 15%" · "VAT Exempt" · "VAT 0%"
+  rate      Decimal  @db.Decimal(8, 4) // percentage as decimal · 0.15 for 15%
+  type      String   @default("STANDARD") // STANDARD | EXEMPT | ZERO_RATED
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invoiceLines InvoiceLine[]
+  billLines    BillLine[]
+  products     Product[]
+
+  @@index([orgId])
+}
+
+// ============================================================================
+// 9 · BANK ACCOUNTS
+// ============================================================================
+
+model BankAccount {
+  id            String   @id @default(cuid())
+  orgId         String
+  accountId     String?  // links to Account in chart of accounts
+  name          String
+  bankName      String?
+  accountNumber String?
+  iban          String?
+  currency      String   @default("SAR")
+  balance       Decimal  @default(0) @db.Decimal(18, 4)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  payments Payment[]
+}
+
+// ============================================================================
+// 10 · JOURNAL ENTRIES (general ledger backbone)
+// ============================================================================
+
+model JournalEntry {
+  id           String   @id @default(cuid())
+  orgId        String
+  entryNumber  String
+  date         DateTime
+  description  String
+  reference    String?  // links to invoice/bill/payment
+  source       String?  // "manual" | "invoice" | "bill" | "payment" | "system"
+  isPosted     Boolean  @default(false)
+  postedAt     DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  org   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lines JournalLine[]
+
+  @@unique([orgId, entryNumber])
+  @@index([orgId, date])
+}
+
+model JournalLine {
+  id          String   @id @default(cuid())
+  journalId   String
+  accountId   String
+  description String?
+  debit       Decimal  @default(0) @db.Decimal(18, 4)
+  credit      Decimal  @default(0) @db.Decimal(18, 4)
+
+  journal JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  account Account      @relation(fields: [accountId], references: [id])
+
+  @@index([journalId])
+  @@index([accountId])
+}
+
+// ============================================================================
+// 11 · BRANCHES · COST CENTERS · PROJECTS
+// ============================================================================
+
+model Branch {
+  id        String   @id @default(cuid())
+  orgId     String
+  name      String
+  code      String?
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model CostCenter {
+  id        String   @id @default(cuid())
+  orgId     String
+  code      String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, code])
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  orgId     String
+  code      String
+  name      String
+  startDate DateTime?
+  endDate   DateTime?
+  status    String   @default("ACTIVE") // ACTIVE | ON_HOLD | COMPLETED | CANCELLED
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, code])
+}
+
+// ============================================================================
+// 12 · FIXED ASSETS
+// ============================================================================
+
+model FixedAsset {
+  id              String   @id @default(cuid())
+  orgId           String
+  code            String
+  name            String
+  category        String?
+  acquisitionDate DateTime
+  acquisitionCost Decimal  @db.Decimal(18, 4)
+  salvageValue    Decimal  @default(0) @db.Decimal(18, 4)
+  usefulLifeYears Int
+  depreciationMethod String @default("STRAIGHT_LINE") // STRAIGHT_LINE | DECLINING_BALANCE
+  status          String   @default("ACTIVE") // ACTIVE | DISPOSED | WRITTEN_OFF
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, code])
+}

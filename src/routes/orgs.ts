@@ -1,0 +1,111 @@
+import { Hono } from 'hono'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
+import { requireAuth } from '../auth.js'
+import { prisma } from '../db.js'
+
+export const orgsRoutes = new Hono()
+
+orgsRoutes.use('*', requireAuth)
+
+// GET /orgs — list orgs the user is a member of
+orgsRoutes.get('/', async (c) => {
+  const auth = c.get('auth')
+  const memberships = await prisma.orgMembership.findMany({
+    where: { userId: auth.userId },
+    include: { org: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  return c.json(memberships.map((m) => ({ ...m.org, role: m.role })))
+})
+
+const createOrgSchema = z.object({
+  slug: z.string().min(2).max(40).regex(/^[a-z0-9-]+$/),
+  name: z.string().min(1).max(120),
+  legalName: z.string().optional(),
+  country: z.string().length(2).default('SA'),
+  baseCurrency: z.string().length(3).default('SAR'),
+  vatNumber: z.string().optional(),
+  crNumber: z.string().optional(),
+})
+
+// POST /orgs — create a new org · auto-add creator as OWNER
+orgsRoutes.post('/', zValidator('json', createOrgSchema), async (c) => {
+  const auth = c.get('auth')
+  const data = c.req.valid('json')
+
+  const org = await prisma.organization.create({
+    data: {
+      ...data,
+      memberships: {
+        create: { userId: auth.userId, role: 'OWNER' },
+      },
+    },
+  })
+
+  // Seed default chart of accounts
+  await seedDefaultAccounts(org.id)
+  // Seed default tax rates
+  await prisma.taxRate.createMany({
+    data: [
+      { orgId: org.id, name: 'VAT 15%', rate: '0.15', type: 'STANDARD' },
+      { orgId: org.id, name: 'VAT Exempt', rate: '0', type: 'EXEMPT' },
+      { orgId: org.id, name: 'VAT 0%', rate: '0', type: 'ZERO_RATED' },
+    ],
+  })
+
+  return c.json(org, 201)
+})
+
+// GET /orgs/:id
+orgsRoutes.get('/:id', async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const m = await prisma.orgMembership.findUnique({
+    where: { userId_orgId: { userId: auth.userId, orgId } },
+    include: { org: true },
+  })
+  if (!m) return c.json({ error: 'not found' }, 404)
+  return c.json({ ...m.org, role: m.role })
+})
+
+// Default Saudi/US chart of accounts (minimal · 5-digit codes)
+async function seedDefaultAccounts(orgId: string) {
+  const accounts: Array<{
+    code: string
+    name: string
+    nameAr: string
+    type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE'
+    subtype?: string
+  }> = [
+    // Assets · 1xxxx
+    { code: '11000', name: 'Cash on Hand', nameAr: 'النقد في الصندوق', type: 'ASSET', subtype: 'cash' },
+    { code: '11100', name: 'Bank Accounts', nameAr: 'الحسابات البنكية', type: 'ASSET', subtype: 'bank' },
+    { code: '12000', name: 'Accounts Receivable', nameAr: 'الذمم المدينة', type: 'ASSET', subtype: 'receivable' },
+    { code: '13000', name: 'Inventory', nameAr: 'المخزون', type: 'ASSET', subtype: 'inventory' },
+    { code: '14000', name: 'Fixed Assets', nameAr: 'الأصول الثابتة', type: 'ASSET', subtype: 'fixed_asset' },
+    // Liabilities · 2xxxx
+    { code: '21000', name: 'Accounts Payable', nameAr: 'الذمم الدائنة', type: 'LIABILITY', subtype: 'payable' },
+    { code: '22000', name: 'VAT Payable', nameAr: 'ضريبة القيمة المضافة المستحقة', type: 'LIABILITY', subtype: 'tax' },
+    { code: '23000', name: 'Loans Payable', nameAr: 'القروض', type: 'LIABILITY', subtype: 'loan' },
+    // Equity · 3xxxx
+    { code: '31000', name: 'Owner Equity', nameAr: 'حقوق الملكية', type: 'EQUITY' },
+    { code: '32000', name: 'Retained Earnings', nameAr: 'الأرباح المحتجزة', type: 'EQUITY' },
+    // Revenue · 4xxxx
+    { code: '41000', name: 'Sales Revenue', nameAr: 'إيرادات المبيعات', type: 'REVENUE' },
+    { code: '42000', name: 'Service Revenue', nameAr: 'إيرادات الخدمات', type: 'REVENUE' },
+    // Expenses · 5xxxx
+    { code: '51000', name: 'Cost of Goods Sold', nameAr: 'تكلفة البضاعة المباعة', type: 'EXPENSE' },
+    { code: '52000', name: 'Salaries', nameAr: 'الرواتب', type: 'EXPENSE' },
+    { code: '53000', name: 'Rent Expense', nameAr: 'مصروف الإيجار', type: 'EXPENSE' },
+    { code: '54000', name: 'Utilities', nameAr: 'المرافق', type: 'EXPENSE' },
+    { code: '55000', name: 'Office Supplies', nameAr: 'مستلزمات مكتبية', type: 'EXPENSE' },
+    { code: '56000', name: 'Marketing', nameAr: 'التسويق', type: 'EXPENSE' },
+    { code: '57000', name: 'Bank Fees', nameAr: 'رسوم بنكية', type: 'EXPENSE' },
+    { code: '58000', name: 'Depreciation', nameAr: 'الإهلاك', type: 'EXPENSE' },
+  ]
+
+  await prisma.account.createMany({
+    data: accounts.map((a) => ({ ...a, orgId })),
+  })
+}
