@@ -71,7 +71,7 @@ dashboardRoutes.get('/summary', async (c) => {
   }
 
   // Cash flow (last 6 months)
-  const cashFlowTrend: Array<{ month: string; in: number; out: number }> = []
+  const cashFlowTrend: Array<{ month: string; in: number; out: number; net: number }> = []
   for (let i = 5; i >= 0; i--) {
     const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1)
     const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
@@ -85,11 +85,86 @@ dashboardRoutes.get('/summary', async (c) => {
         _sum: { amount: true },
       }),
     ])
+    const inn = Number(inAgg._sum.amount || 0)
+    const out = Number(outAgg._sum.amount || 0)
     cashFlowTrend.push({
       month: monthStart.toLocaleDateString('ar-SA', { month: 'short' }),
-      in: Number(inAgg._sum.amount || 0),
-      out: Number(outAgg._sum.amount || 0),
+      in: inn,
+      out,
+      net: inn - out,
     })
+  }
+
+  // ── New widgets ──────────────────────────────────────────────────────────
+  // Expense breakdown by category (YTD)
+  const yearStart = new Date(now.getFullYear(), 0, 1)
+  const expenseBreakdown = await prisma.expense.groupBy({
+    by: ['category'],
+    where: { orgId, date: { gte: yearStart } },
+    _sum: { total: true },
+    orderBy: { _sum: { total: 'desc' } },
+    take: 8,
+  })
+
+  // AR (receivable from customers) + AP (payable to suppliers)
+  const [arOpen, apOpen] = await Promise.all([
+    prisma.invoice.aggregate({
+      where: { orgId, status: { in: ['SENT', 'PARTIAL', 'OVERDUE'] } },
+      _sum: { total: true, amountPaid: true },
+    }),
+    prisma.bill.aggregate({
+      where: { orgId, status: { in: ['UNPAID', 'PARTIAL', 'OVERDUE'] } as any },
+      _sum: { total: true, amountPaid: true },
+    }),
+  ])
+  const accountsReceivable = Number(arOpen._sum.total || 0) - Number(arOpen._sum.amountPaid || 0)
+  const accountsPayable = Number(apOpen._sum.total || 0) - Number(apOpen._sum.amountPaid || 0)
+
+  // Overdue invoices (top 5)
+  const overdueInvoices = await prisma.invoice.findMany({
+    where: { orgId, status: 'OVERDUE' },
+    include: { contact: { select: { displayName: true } } },
+    orderBy: { dueDate: 'asc' },
+    take: 5,
+  })
+
+  // Connected bank accounts
+  const bankAccounts = await prisma.bankAccount.findMany({
+    where: { orgId, isActive: true },
+    select: { id: true, name: true, bankName: true, balance: true, currency: true, accountNumber: true },
+    orderBy: { balance: 'desc' },
+    take: 6,
+  })
+  const totalCashOnHand = bankAccounts.reduce((sum, b) => sum + Number(b.balance || 0), 0)
+
+  // P&L last 6 months (net = revenue - expenses)
+  const profitLoss = monthlyTrend.map((m) => ({
+    month: m.month,
+    revenue: m.revenue,
+    expenses: m.expenses,
+    net: m.revenue - m.expenses,
+  }))
+
+  // This vs last period (this month vs last month)
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
+  const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1)
+  const [thisMonthRev, thisMonthExp, lastMonthRev, lastMonthExp] = await Promise.all([
+    prisma.invoice.aggregate({ where: { orgId, issueDate: { gte: startOfMonth } }, _sum: { total: true } }),
+    prisma.expense.aggregate({ where: { orgId, date: { gte: startOfMonth } }, _sum: { total: true } }),
+    prisma.invoice.aggregate({ where: { orgId, issueDate: { gte: lastMonthStart, lt: lastMonthEnd } }, _sum: { total: true } }),
+    prisma.expense.aggregate({ where: { orgId, date: { gte: lastMonthStart, lt: lastMonthEnd } }, _sum: { total: true } }),
+  ])
+  const periodCompare = {
+    thisMonth: {
+      revenue: Number(thisMonthRev._sum.total || 0),
+      expenses: Number(thisMonthExp._sum.total || 0),
+      net: Number(thisMonthRev._sum.total || 0) - Number(thisMonthExp._sum.total || 0),
+    },
+    lastMonth: {
+      revenue: Number(lastMonthRev._sum.total || 0),
+      expenses: Number(lastMonthExp._sum.total || 0),
+      net: Number(lastMonthRev._sum.total || 0) - Number(lastMonthExp._sum.total || 0),
+    },
   }
 
   return c.json({
@@ -106,9 +181,35 @@ dashboardRoutes.get('/summary', async (c) => {
       invoiceCount,
       overdueCount,
       contactCount,
+      accountsReceivable,
+      accountsPayable,
+      cashOnHand: totalCashOnHand,
     },
     monthlyTrend,
     cashFlowTrend,
+    profitLoss,
+    expenseBreakdown: expenseBreakdown.map((e) => ({
+      category: e.category || 'غير مصنّف',
+      total: Number(e._sum.total || 0),
+    })),
+    overdueInvoices: overdueInvoices.map((i) => ({
+      id: i.id,
+      number: i.invoiceNumber,
+      contact: i.contact.displayName,
+      total: Number(i.total),
+      remaining: Number(i.total) - Number(i.amountPaid),
+      dueDate: i.dueDate?.toISOString().slice(0, 10) || null,
+      daysOverdue: i.dueDate ? Math.max(0, Math.floor((now.getTime() - i.dueDate.getTime()) / 86_400_000)) : 0,
+    })),
+    bankAccounts: bankAccounts.map((b) => ({
+      id: b.id,
+      name: b.name,
+      bankName: b.bankName,
+      accountNumber: b.accountNumber,
+      currency: b.currency,
+      balance: Number(b.balance || 0),
+    })),
+    periodCompare,
   })
 })
 

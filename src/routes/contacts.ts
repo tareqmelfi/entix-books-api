@@ -194,6 +194,106 @@ contactsRoutes.delete('/:id', async (c) => {
   return c.body(null, 204)
 })
 
+// GET /contacts/:id/summary · contact + all related records (for the detail page)
+contactsRoutes.get('/:id/summary', async (c) => {
+  const orgId = c.get('orgId')
+  const id = c.req.param('id')
+  const contact = await prisma.contact.findFirst({ where: { id, orgId } })
+  if (!contact) return c.json({ error: 'not found' }, 404)
+
+  const [
+    invoiceAgg,
+    billAgg,
+    quoteAgg,
+    receiptAgg,
+    paymentAgg,
+    invoices,
+    bills,
+    quotes,
+    vouchers,
+    expenses,
+  ] = await Promise.all([
+    prisma.invoice.aggregate({
+      where: { orgId, contactId: id },
+      _sum: { total: true, amountPaid: true },
+      _count: true,
+    }),
+    prisma.bill.aggregate({
+      where: { orgId, contactId: id },
+      _sum: { total: true, amountPaid: true },
+      _count: true,
+    }),
+    prisma.quote.aggregate({
+      where: { orgId, contactId: id },
+      _sum: { total: true },
+      _count: true,
+    }),
+    prisma.voucher.aggregate({
+      where: { orgId, contactId: id, type: 'RECEIPT' },
+      _sum: { amount: true },
+      _count: true,
+    }),
+    prisma.voucher.aggregate({
+      where: { orgId, contactId: id, type: 'PAYMENT' },
+      _sum: { amount: true },
+      _count: true,
+    }),
+    prisma.invoice.findMany({
+      where: { orgId, contactId: id },
+      orderBy: { issueDate: 'desc' },
+      take: 20,
+      select: { id: true, invoiceNumber: true, issueDate: true, dueDate: true, total: true, amountPaid: true, status: true, currency: true },
+    }),
+    prisma.bill.findMany({
+      where: { orgId, contactId: id },
+      orderBy: { issueDate: 'desc' },
+      take: 20,
+      select: { id: true, billNumber: true, issueDate: true, dueDate: true, total: true, amountPaid: true, status: true, currency: true },
+    }),
+    prisma.quote.findMany({
+      where: { orgId, contactId: id },
+      orderBy: { issueDate: 'desc' },
+      take: 10,
+      select: { id: true, quoteNumber: true, issueDate: true, validUntil: true, total: true, status: true, currency: true },
+    }),
+    prisma.voucher.findMany({
+      where: { orgId, contactId: id },
+      orderBy: { date: 'desc' },
+      take: 20,
+      select: { id: true, number: true, type: true, date: true, amount: true, currency: true, paymentMethod: true, reference: true, notes: true },
+    }),
+    prisma.expense.findMany({
+      where: { orgId, contactId: id },
+      orderBy: { date: 'desc' },
+      take: 10,
+      select: { id: true, date: true, total: true, category: true, description: true, currency: true },
+    }),
+  ])
+
+  const arOpen = Number(invoiceAgg._sum.total || 0) - Number(invoiceAgg._sum.amountPaid || 0)
+  const apOpen = Number(billAgg._sum.total || 0) - Number(billAgg._sum.amountPaid || 0)
+  const balance = arOpen - apOpen // positive = they owe me · negative = I owe them
+
+  return c.json({
+    contact,
+    totals: {
+      invoices: { count: invoiceAgg._count, total: Number(invoiceAgg._sum.total || 0), paid: Number(invoiceAgg._sum.amountPaid || 0), outstanding: arOpen },
+      bills: { count: billAgg._count, total: Number(billAgg._sum.total || 0), paid: Number(billAgg._sum.amountPaid || 0), outstanding: apOpen },
+      quotes: { count: quoteAgg._count, total: Number(quoteAgg._sum.total || 0) },
+      receipts: { count: receiptAgg._count, total: Number(receiptAgg._sum.amount || 0) },
+      payments: { count: paymentAgg._count, total: Number(paymentAgg._sum.amount || 0) },
+      arOpen,
+      apOpen,
+      balance,
+    },
+    invoices,
+    bills,
+    quotes,
+    vouchers,
+    expenses,
+  })
+})
+
 // POST /contacts/:id/touch · update lastInteraction (called when an invoice/quote/voucher is created for this contact)
 contactsRoutes.post('/:id/touch', async (c) => {
   const orgId = c.get('orgId')

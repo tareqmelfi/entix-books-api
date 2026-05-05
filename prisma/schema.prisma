@@ -126,6 +126,7 @@ model Organization {
   stockLevels     StockLevel[]
   stockMovements  StockMovement[]
   loyaltyAccounts LoyaltyAccount[]
+  inboxMessages   InboxMessage[]
 
   @@index([slug])
 }
@@ -976,4 +977,56 @@ model AiUsageLog {
 
   @@index([orgId, createdAt])
   @@index([orgId, endpoint])
+}
+
+// ── Email inbox · UX-81 ──────────────────────────────────────────────────────
+// Inbound emails forwarded by SMTP-to-HTTP provider · auto-extract → DRAFT bills
+model InboxMessage {
+  id                 String   @id @default(cuid())
+  orgId              String
+  fromAddress        String
+  toAddress          String
+  subject            String   @default("")
+  bodyText           String   @db.Text @default("")
+  bodyHtml           String   @db.Text @default("")
+  messageId          String?
+  status             InboxStatus @default(RECEIVED)
+  attachmentCount    Int      @default(0)
+  // AI extraction output
+  extractedJson      Json?
+  extractedKind      String?
+  extractedTotal     Decimal? @db.Decimal(15, 2)
+  extractedCurrency  String?
+  // Approval link
+  billId             String?
+  processedAt        DateTime?
+  createdAt          DateTime @default(now())
+
+  org         Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  attachments InboxAttachment[]
+
+  @@index([orgId, status])
+  @@index([orgId, createdAt])
+}
+
+model InboxAttachment {
+  id            String   @id @default(cuid())
+  messageId     String
+  filename      String
+  contentType   String
+  sizeBytes     Int
+  contentBase64 String   @db.Text
+  createdAt     DateTime @default(now())
+
+  message InboxMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+enum InboxStatus {
+  RECEIVED       // just arrived · not yet processed
+  EXTRACTED      // AI ran · waiting for user approval
+  APPROVED       // user accepted · bill created
+  REJECTED       // user dismissed
+  ERROR          // extraction failed
 }

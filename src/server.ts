@@ -36,6 +36,7 @@ import { agentExtractRoutes } from './routes/agent-extract.js'
 import { plaidRoutes } from './routes/plaid.js'
 import { brokersRoutes } from './routes/brokers.js'
 import { aiBillingRoutes } from './routes/ai-billing.js'
+import { inboxRoutes, inboxWebhookRoutes } from './routes/inbox.js'
 
 const app = new Hono()
 
@@ -124,7 +125,11 @@ orgScoped.route('/agent', agentAdvancedRoutes)
 orgScoped.route('/agent', agentExtractRoutes)
 orgScoped.route('/plaid', plaidRoutes)
 orgScoped.route('/brokers', brokersRoutes)
+orgScoped.route('/inbox', inboxRoutes)
 app.route('/api', orgScoped)
+
+// Inbound email webhook · public · validated by X-Inbox-Token header
+app.route('/api/inbox', inboxWebhookRoutes)
 
 // Sign routes mounted at top level so the webhook (POST /api/sign/webhook)
 // is reachable WITHOUT auth · auth is applied per-subroute inside sign.ts
