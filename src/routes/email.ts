@@ -31,7 +31,7 @@ emailRoutes.post('/invoices/:id/send', zValidator('json', sendSchema), async (c)
 
   const invoice = await prisma.invoice.findFirst({
     where: { id, orgId },
-    include: { contact: true, lines: true, organization: true },
+    include: { contact: true, lines: true, org: true },
   })
   if (!invoice) return c.json({ error: 'not_found' }, 404)
 
@@ -61,8 +61,8 @@ emailRoutes.post('/invoices/:id/send', zValidator('json', sendSchema), async (c)
       taxId: invoice.contact?.taxId,
     },
     org: {
-      name: (invoice as any).organization?.name || 'Entix Books',
-      taxId: (invoice as any).organization?.taxId || null,
+      name: (invoice as any).org?.name || 'Entix Books',
+      taxId: (invoice as any).org?.taxId || null,
     },
     payLink: body.payLink,
     message: body.message,
@@ -85,7 +85,7 @@ emailRoutes.post('/quotes/:id/send', zValidator('json', sendSchema), async (c) =
 
   const quote = await prisma.quote.findFirst({
     where: { id, orgId },
-    include: { contact: true, lines: true, organization: true },
+    include: { contact: true, lines: true, org: true },
   })
   if (!quote) return c.json({ error: 'not_found' }, 404)
 
@@ -114,8 +114,8 @@ emailRoutes.post('/quotes/:id/send', zValidator('json', sendSchema), async (c) =
       taxId: quote.contact?.taxId,
     },
     org: {
-      name: (quote as any).organization?.name || 'Entix Books',
-      taxId: (quote as any).organization?.taxId || null,
+      name: (quote as any).org?.name || 'Entix Books',
+      taxId: (quote as any).org?.taxId || null,
     },
     acceptLink: body.payLink, // reuse field name in body for accept link
     message: body.message,

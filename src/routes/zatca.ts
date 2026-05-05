@@ -27,11 +27,11 @@ zatcaRoutes.post('/invoices/:id/process', async (c) => {
 
   const invoice = await prisma.invoice.findFirst({
     where: { id, orgId },
-    include: { contact: true, lines: true, organization: true },
-  })
+    include: { contact: true, lines: true, org: true },
+  }) as any
   if (!invoice) return c.json({ error: 'not_found' }, 404)
 
-  const org = (invoice as any).organization
+  const org = (invoice as any).org
   if (!org?.vatNumber) {
     return c.json({ error: 'org_not_configured', message: 'الرقم الضريبي للمنشأة غير مسجل · أضفه من الإعدادات' }, 400)
   }
