@@ -25,6 +25,7 @@ import { bankAccountsRoutes } from './routes/bank-accounts.js'
 import { branchesRoutes, costCentersRoutes, projectsRoutes, fixedAssetsRoutes, productsRoutes } from './routes/orgScoped.js'
 import { notificationsRoutes } from './routes/notifications.js'
 import { signRoutes } from './routes/sign.js'
+import { aiBillingRoutes } from './routes/ai-billing.js'
 
 const app = new Hono()
 
@@ -109,6 +110,10 @@ app.route('/api', orgScoped)
 // Sign routes mounted at top level so the webhook (POST /api/sign/webhook)
 // is reachable WITHOUT auth · auth is applied per-subroute inside sign.ts
 app.route('/api/sign', signRoutes)
+
+// AI billing routes (BYOK + hosted credits + admin)
+// Auth handled per-subroute inside ai-billing.ts (requireOrg for self · requireAdmin for cross-org)
+app.route('/api/ai-billing', aiBillingRoutes)
 
 // ── Error handler ──────────────────────────────────────────────────────────
 app.onError((err, c) => {

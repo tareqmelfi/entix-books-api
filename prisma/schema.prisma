@@ -120,6 +120,8 @@ model Organization {
   vouchers        Voucher[]
   notifications   Notification[]
   signatures      SignatureRequest[]
+  aiBilling       AiBilling?
+  aiUsageLogs     AiUsageLog[]
 
   @@index([slug])
 }
@@ -735,4 +737,63 @@ model SignatureRequest {
 
   @@index([orgId, status])
   @@index([docType, docId])
+}
+
+// ============================================================================
+// 11.12 · AI BILLING (BYOK + hosted credits · multi-tenant cost control)
+// ============================================================================
+
+enum AiKeyMode {
+  BYOK            // org provides own OpenRouter/Anthropic key · we charge $0 for AI
+  HOSTED_FREE     // entix key · $5/month allocation · free tier
+  HOSTED_PRO      // entix key · $30/month included · $19 subscription
+  HOSTED_BUSINESS // entix key · $100/month included · $49 subscription
+  PAYG            // entix key · pay-as-you-go · $1.20 per $1 of AI cost
+}
+
+model AiBilling {
+  id                String    @id @default(cuid())
+  orgId             String    @unique
+  mode              AiKeyMode @default(HOSTED_FREE)
+  // BYOK · encrypted at rest (AES-256-GCM with KMS-managed key)
+  byokProvider      String?   // "openrouter" | "anthropic"
+  byokKeyEncrypted  String?   @db.Text
+  byokKeyHint       String?   // last 4 chars of key for UI display (sk-...XXXX)
+  // Hosted billing
+  monthlyAllocation Decimal   @default(5) @db.Decimal(10, 2)  // USD limit
+  creditBalance     Decimal   @default(0) @db.Decimal(10, 2)  // top-ups remaining
+  spentThisPeriod   Decimal   @default(0) @db.Decimal(10, 2)
+  periodResetAt     DateTime  @default(now())
+  alertedAt80       Boolean   @default(false)
+  alertedAt100      Boolean   @default(false)
+  // Override (admin can disable AI for an org regardless of mode)
+  disabled          Boolean   @default(false)
+  disabledReason    String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  org               Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([mode, periodResetAt])
+}
+
+model AiUsageLog {
+  id               String   @id @default(cuid())
+  orgId            String
+  userId           String?
+  endpoint         String   // /api/agent/chat | /api/ocr/extract | /api/ocr/extract-batch
+  model            String   // anthropic/claude-sonnet-4.6
+  provider         String   // openrouter | anthropic
+  source           String   // BYOK | HOSTED
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  costUsd          Decimal  @db.Decimal(10, 6)
+  successful       Boolean  @default(true)
+  errorCode        String?
+  createdAt        DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([orgId, endpoint])
 }
