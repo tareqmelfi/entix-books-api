@@ -58,7 +58,7 @@ agentAdvancedRoutes.post('/voice', zValidator('json', voiceSchema), async (c) =>
       const txt = await r.text()
       return c.json({ error: 'stt_failed', detail: txt }, 502)
     }
-    const data = await r.json()
+    const data = await r.json() as any
     const transcript = data.text || ''
 
     if (mode === 'transcribe-only') {

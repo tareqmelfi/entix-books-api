@@ -296,7 +296,7 @@ export async function submitForClearance(
       },
       body: JSON.stringify({ invoiceHash: invoiceHashBase64, uuid, invoice: signedInvoiceXmlBase64 }),
     })
-    const json = await r.json().catch(() => ({}))
+    const json: any = await r.json().catch(() => ({}))
     if (!r.ok) return { ok: false, status: 'ERROR', errors: [json?.error || `HTTP ${r.status}`], raw: json }
     return {
       ok: true,
@@ -338,7 +338,7 @@ export async function submitForReporting(
       },
       body: JSON.stringify({ invoiceHash: invoiceHashBase64, uuid, invoice: signedInvoiceXmlBase64 }),
     })
-    const json = await r.json().catch(() => ({}))
+    const json: any = await r.json().catch(() => ({}))
     if (!r.ok) return { ok: false, status: 'ERROR', errors: [json?.error || `HTTP ${r.status}`], raw: json }
     return {
       ok: json.reportingStatus !== 'NOT_REPORTED',

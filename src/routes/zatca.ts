@@ -84,7 +84,7 @@ zatcaRoutes.post('/invoices/:id/process', async (c) => {
       postalCode: invoice.contact?.postalCode || undefined,
       country: invoice.contact?.country || undefined,
     },
-    lines: invoice.lines.map((l, i) => {
+    lines: (invoice.lines as any[]).map((l: any, i: number) => {
       const qty = Number(l.quantity)
       const unit = Number(l.unitPrice)
       const subtotal = qty * unit - Number(l.discount || 0)

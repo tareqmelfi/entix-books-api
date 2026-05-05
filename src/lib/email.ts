@@ -54,10 +54,10 @@ export async function sendEmail(args: SendArgs): Promise<{ ok: boolean; id?: str
       }),
     })
     if (!res.ok) {
-      const data = await res.json().catch(() => ({}))
+      const data: any = await res.json().catch(() => ({}))
       return { ok: false, error: data?.message || `HTTP ${res.status}` }
     }
-    const data = await res.json()
+    const data: any = await res.json()
     return { ok: true, id: data?.id }
   } catch (e: any) {
     return { ok: false, error: e?.message || 'send failed' }

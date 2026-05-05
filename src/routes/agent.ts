@@ -590,7 +590,7 @@ Rules:
       console.warn('[parse-paste] AI failed · falling back', r.status)
       return c.json({ ...fallbackParse(text), source: 'fallback', reason: `ai_${r.status}` })
     }
-    const json = await r.json()
+    const json: any = await r.json()
     const content = json.choices?.[0]?.message?.content || '{}'
     totalPromptTokens = json.usage?.prompt_tokens || 0
     totalCompletionTokens = json.usage?.completion_tokens || 0

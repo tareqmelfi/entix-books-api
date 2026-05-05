@@ -52,7 +52,7 @@ emailRoutes.post('/invoices/:id/send', zValidator('json', sendSchema), async (c)
         description: l.description,
         quantity: Number(l.quantity),
         unitPrice: Number(l.unitPrice),
-        total: Number(l.lineTotal),
+        total: Number(l.subtotal),
       })),
     },
     customer: {
@@ -105,7 +105,7 @@ emailRoutes.post('/quotes/:id/send', zValidator('json', sendSchema), async (c) =
         description: l.description,
         quantity: Number(l.quantity),
         unitPrice: Number(l.unitPrice),
-        total: Number(l.lineTotal),
+        total: Number(l.subtotal),
       })),
     },
     customer: {

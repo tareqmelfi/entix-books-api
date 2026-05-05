@@ -161,7 +161,7 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
       const detail = await r.text()
       return c.json({ error: 'extraction_failed', detail, status: r.status }, 502)
     }
-    const json = await r.json()
+    const json = await r.json() as any
     const content = json.choices?.[0]?.message?.content || '{}'
     const promptTokens = json.usage?.prompt_tokens || 0
     const completionTokens = json.usage?.completion_tokens || 0
