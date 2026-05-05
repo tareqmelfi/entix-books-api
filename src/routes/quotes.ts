@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
+import { createNotification } from './notifications.js'
 
 export const quotesRoutes = new Hono()
 
@@ -228,6 +229,15 @@ quotesRoutes.post('/:id/convert-to-invoice', async (c) => {
       data: { status: 'CONVERTED', convertedInvoiceId: inv.id },
     })
     return inv
+  })
+
+  await createNotification(orgId, {
+    type: 'QUOTE_ACCEPTED',
+    title: `تحويل عرض سعر إلى فاتورة · ${q.quoteNumber}`,
+    body: `تم إنشاء فاتورة ${invoice.invoiceNumber} بقيمة ${Number(invoice.total).toLocaleString()} ${invoice.currency}`,
+    link: `/app/invoices`,
+    refType: 'INVOICE',
+    refId: invoice.id,
   })
 
   return c.json({ invoice, quoteId: q.id }, 201)

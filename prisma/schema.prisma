@@ -118,6 +118,8 @@ model Organization {
   expenses        Expense[]
   quotes          Quote[]
   vouchers        Voucher[]
+  notifications   Notification[]
+  signatures      SignatureRequest[]
 
   @@index([slug])
 }
@@ -682,4 +684,55 @@ model FixedAsset {
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, code])
+}
+
+// ============================================================================
+// 11.10 · NOTIFICATIONS (in-app feed for the bell dropdown)
+// ============================================================================
+
+model Notification {
+  id        String   @id @default(cuid())
+  orgId     String
+  userId    String?  // null = visible to all org members; otherwise targeted
+  type      String   // INVOICE_PAID | QUOTE_ACCEPTED | QUOTE_SIGNED | INVOICE_OVERDUE | EXPENSE_CREATED | OCR_LOW_CONFIDENCE | SIGN_REQUESTED | SIGN_COMPLETED | SYSTEM
+  title     String
+  body      String?  @db.Text
+  link      String?  // in-app deep link · e.g. /app/invoices/abc123
+  refType   String?  // INVOICE | QUOTE | VOUCHER | EXPENSE | BILL | SIGNATURE
+  refId     String?
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, userId, readAt])
+  @@index([orgId, createdAt])
+}
+
+// ============================================================================
+// 11.11 · SIGNATURE REQUESTS (DocuSeal at sign.fc.sa integration)
+// ============================================================================
+
+model SignatureRequest {
+  id                    String   @id @default(cuid())
+  orgId                 String
+  docType               String   // QUOTE | INVOICE | CONTRACT
+  docId                 String   // FK to Quote.id / Invoice.id (loose ref, validated at app layer)
+  docNumber             String   // human-friendly (Q-2026-001 / INV-2026-042)
+  status                String   @default("PENDING") // PENDING | SENT | VIEWED | SIGNED | DECLINED | EXPIRED
+  docusealSubmissionId  String?  @unique
+  docusealEmbedUrl      String?  @db.Text
+  signers               String   @db.Text // JSON array: [{name, email, role, status, signedAt}]
+  signedPdfUrl          String?  @db.Text
+  auditTrailUrl         String?  @db.Text
+  sentAt                DateTime?
+  signedAt              DateTime?
+  expiresAt             DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, status])
+  @@index([docType, docId])
 }

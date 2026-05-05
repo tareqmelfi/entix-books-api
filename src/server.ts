@@ -23,6 +23,8 @@ import { dashboardRoutes } from './routes/dashboard.js'
 import { billsRoutes } from './routes/bills.js'
 import { bankAccountsRoutes } from './routes/bank-accounts.js'
 import { branchesRoutes, costCentersRoutes, projectsRoutes, fixedAssetsRoutes, productsRoutes } from './routes/orgScoped.js'
+import { notificationsRoutes } from './routes/notifications.js'
+import { signRoutes } from './routes/sign.js'
 
 const app = new Hono()
 
@@ -101,7 +103,12 @@ orgScoped.route('/cost-centers', costCentersRoutes)
 orgScoped.route('/projects', projectsRoutes)
 orgScoped.route('/fixed-assets', fixedAssetsRoutes)
 orgScoped.route('/products', productsRoutes)
+orgScoped.route('/notifications', notificationsRoutes)
 app.route('/api', orgScoped)
+
+// Sign routes mounted at top level so the webhook (POST /api/sign/webhook)
+// is reachable WITHOUT auth · auth is applied per-subroute inside sign.ts
+app.route('/api/sign', signRoutes)
 
 // ── Error handler ──────────────────────────────────────────────────────────
 app.onError((err, c) => {

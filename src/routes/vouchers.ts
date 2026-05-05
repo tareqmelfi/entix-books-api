@@ -10,6 +10,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
+import { createNotification } from './notifications.js'
 
 export const vouchersRoutes = new Hono()
 
@@ -138,6 +139,28 @@ vouchersRoutes.post('/', zValidator('json', voucherSchema), async (c) => {
 
     return v
   })
+
+  // Fire-and-forget notification (outside tx)
+  const customerName = voucher.contact?.displayName || ''
+  if (data.type === 'RECEIPT') {
+    await createNotification(orgId, {
+      type: 'INVOICE_PAID',
+      title: `سند قبض جديد · ${voucher.number}`,
+      body: `${data.amount.toLocaleString()} ${data.currency}${customerName ? ` من ${customerName}` : ''}`,
+      link: `/app/receipts`,
+      refType: 'VOUCHER',
+      refId: voucher.id,
+    })
+  } else {
+    await createNotification(orgId, {
+      type: 'EXPENSE_CREATED',
+      title: `سند صرف جديد · ${voucher.number}`,
+      body: `${data.amount.toLocaleString()} ${data.currency}${customerName ? ` لـ ${customerName}` : ''}`,
+      link: `/app/payments`,
+      refType: 'VOUCHER',
+      refId: voucher.id,
+    })
+  }
 
   return c.json(voucher, 201)
 })
