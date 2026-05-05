@@ -19,6 +19,60 @@ export const agentRoutes = new Hono()
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || ''
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
+// Fallback chain · if first model is unavailable, try the next one
+// Order: best-quality first · cheaper/older as fallback
+const MODEL_CHAIN = [
+  process.env.OPENROUTER_AGENT_MODEL || 'anthropic/claude-sonnet-4.5',
+  'anthropic/claude-3.7-sonnet',
+  'anthropic/claude-3.5-sonnet',
+  'openai/gpt-4o-mini', // last-resort fallback so the agent never goes fully dark
+]
+
+async function callOpenRouterWithFallback(payload: any): Promise<{ ok: true; json: any; model: string } | { ok: false; status: number; detail: string; triedModels: string[] }> {
+  const tried: string[] = []
+  for (const model of MODEL_CHAIN) {
+    tried.push(model)
+    try {
+      const r = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${OPENROUTER_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://entix.io',
+          'X-Title': 'Entix Books · Agent',
+        },
+        body: JSON.stringify({ ...payload, model }),
+      })
+      if (r.ok) {
+        return { ok: true, json: await r.json(), model }
+      }
+      const txt = await r.text()
+      // 4xx for unknown model · try next model. 5xx · retry once then give up
+      const isModelIssue = r.status === 400 || r.status === 404 || /model.*not.*found|invalid.*model|no longer available/i.test(txt)
+      if (!isModelIssue && r.status >= 500) {
+        // brief retry on the same model (transient upstream)
+        await new Promise((res) => setTimeout(res, 500))
+        const r2 = await fetch(OPENROUTER_URL, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${OPENROUTER_KEY}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://entix.io',
+            'X-Title': 'Entix Books · Agent',
+          },
+          body: JSON.stringify({ ...payload, model }),
+        })
+        if (r2.ok) return { ok: true, json: await r2.json(), model }
+        // fall through to try next model
+      }
+      console.warn(`[agent] model ${model} failed · status=${r.status}`, txt.slice(0, 200))
+    } catch (e: any) {
+      console.warn(`[agent] model ${model} threw`, e?.message)
+    }
+  }
+  return { ok: false, status: 502, detail: 'كل نماذج الذكاء الاصطناعي غير متاحة حالياً · حاول بعد دقيقة', triedModels: tried }
+}
+
 const SYSTEM_PROMPT = `أنت مساعد محاسبي ذكي لمنصة ENTIX Books · تتحدث العربية بطلاقة.
 You help with: bookkeeping · invoicing · expenses · vouchers · reports · supplier and customer management.
 
@@ -294,36 +348,30 @@ agentRoutes.post('/chat', zValidator('json', chatSchema), async (c) => {
   const conversation: any[] = [{ role: 'system', content: SYSTEM_PROMPT }, ...messages]
   const toolResults: any[] = []
 
+  let activeModel = MODEL_CHAIN[0]
+
   for (let i = 0; i < 5; i++) {
-    const r = await fetch(OPENROUTER_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${OPENROUTER_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://entix.io',
-        'X-Title': 'Entix Books · Agent',
-      },
-      body: JSON.stringify({
-        model: 'anthropic/claude-sonnet-4.6',
-        messages: conversation,
-        tools: TOOLS,
-        max_tokens: 1500,
-        temperature: 0.3,
-      }),
+    const result = await callOpenRouterWithFallback({
+      messages: conversation,
+      tools: TOOLS,
+      max_tokens: 1500,
+      temperature: 0.3,
     })
-    if (!r.ok) {
-      const t = await r.text()
-      return c.json({ error: 'openrouter_error', status: r.status, detail: t.slice(0, 500) }, 502)
+    if (!result.ok) {
+      return c.json(
+        { error: 'openrouter_error', detail: result.detail, triedModels: result.triedModels },
+        502,
+      )
     }
-    const json: any = await r.json()
-    const msg = json.choices?.[0]?.message
+    activeModel = result.model
+    const msg = result.json.choices?.[0]?.message
     if (!msg) return c.json({ error: 'no_message' }, 502)
     conversation.push(msg)
 
     const toolCalls = msg.tool_calls || []
     if (!toolCalls.length) {
       // Final answer
-      return c.json({ message: msg.content, toolResults })
+      return c.json({ message: msg.content, toolResults, model: activeModel })
     }
 
     for (const tc of toolCalls) {
@@ -344,5 +392,10 @@ agentRoutes.post('/chat', zValidator('json', chatSchema), async (c) => {
 })
 
 agentRoutes.get('/health', (c) =>
-  c.json({ enabled: !!OPENROUTER_KEY, model: 'claude-sonnet-4.6', tools: TOOLS.length }),
+  c.json({
+    enabled: !!OPENROUTER_KEY,
+    primaryModel: MODEL_CHAIN[0],
+    fallbackChain: MODEL_CHAIN,
+    tools: TOOLS.length,
+  }),
 )
