@@ -33,6 +33,8 @@ import { payrollRoutes } from './routes/payroll.js'
 import { inventoryRoutes } from './routes/inventory.js'
 import { agentAdvancedRoutes } from './routes/agent-advanced.js'
 import { agentExtractRoutes } from './routes/agent-extract.js'
+import { plaidRoutes } from './routes/plaid.js'
+import { brokersRoutes } from './routes/brokers.js'
 import { aiBillingRoutes } from './routes/ai-billing.js'
 
 const app = new Hono()
@@ -120,6 +122,8 @@ orgScoped.route('/payroll', payrollRoutes)
 orgScoped.route('/inventory', inventoryRoutes)
 orgScoped.route('/agent', agentAdvancedRoutes)
 orgScoped.route('/agent', agentExtractRoutes)
+orgScoped.route('/plaid', plaidRoutes)
+orgScoped.route('/brokers', brokersRoutes)
 app.route('/api', orgScoped)
 
 // Sign routes mounted at top level so the webhook (POST /api/sign/webhook)
