@@ -117,15 +117,32 @@ async function callOpenRouter(payload: any): Promise<{ ok: true; json: any; mode
 
 function buildUserContent(file: { fileBase64: string; mimeType: string; fileName?: string; rawText?: string }, hint?: string) {
   const mime = file.mimeType || 'application/octet-stream'
-  const isVisual = VISION_MIMES.has(mime) || mime.startsWith('image/')
+  const isPdf = mime === 'application/pdf' || (file.fileName || '').toLowerCase().endsWith('.pdf')
+  const isImage = mime.startsWith('image/')
   const intro = `File: ${file.fileName || '(unnamed)'} · type: ${mime}${hint ? ` · hint: ${hint}` : ''}`
 
-  if (isVisual) {
+  if (isPdf) {
+    // Anthropic-native PDF support · OpenRouter passes through the `file` content type
+    // Reference: https://docs.anthropic.com/en/docs/build-with-claude/pdf-support
+    return [
+      { type: 'text', text: intro + '\nExtract all visible fields per the schema. The PDF may be multi-page · combine all pages into one extraction.' },
+      {
+        type: 'file',
+        file: {
+          filename: file.fileName || 'document.pdf',
+          file_data: `data:application/pdf;base64,${file.fileBase64}`,
+        },
+      },
+    ]
+  }
+
+  if (isImage) {
     return [
       { type: 'text', text: intro + '\nExtract all visible fields per the schema.' },
       { type: 'image_url', image_url: { url: `data:${mime};base64,${file.fileBase64}` } },
     ]
   }
+
   // Non-visual: assume the caller provided extracted text · or decode base64 → utf-8
   let text = file.rawText
   if (!text) {
