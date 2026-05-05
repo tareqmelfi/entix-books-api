@@ -65,7 +65,7 @@ plaidRoutes.get('/link-token', async (c) => {
     })
     return c.json(result)
   } catch (e: any) {
-    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status)
+    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status as any)
     throw e
   }
 })
@@ -158,7 +158,7 @@ plaidRoutes.post('/exchange', zValidator('json', exchangeSchema), async (c) => {
       message: `تم ربط ${created.length} حساب بنكي`,
     })
   } catch (e: any) {
-    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status)
+    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status as any)
     throw e
   }
 })
@@ -223,7 +223,7 @@ plaidRoutes.post('/items/:id/sync', async (c) => {
       message: `تم استيراد ${createdCount} حركة جديدة`,
     })
   } catch (e: any) {
-    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status)
+    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status as any)
     throw e
   }
 })
@@ -236,7 +236,7 @@ plaidRoutes.post('/items/:id/refresh', async (c) => {
     const accounts = await refreshBalance(accessToken)
     return c.json({ ok: true, accounts })
   } catch (e: any) {
-    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status)
+    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status as any)
     throw e
   }
 })
@@ -249,7 +249,7 @@ plaidRoutes.delete('/items/:id', async (c) => {
     await removeItem(accessToken)
     return c.body(null, 204)
   } catch (e: any) {
-    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status)
+    if (e instanceof PlaidError) return c.json({ error: e.code, message: e.detail }, e.status as any)
     throw e
   }
 })
