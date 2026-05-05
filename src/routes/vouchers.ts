@@ -26,6 +26,12 @@ const voucherSchema = z.object({
   notes: z.string().optional().nullable(),
   invoiceId: z.string().optional().nullable(),
   billId: z.string().optional().nullable(),
+  // UX-45 enrichment
+  bankAccountId: z.string().optional().nullable(),
+  isAdvance: z.boolean().optional().default(false),
+  projectId: z.string().optional().nullable(),
+  costCenterId: z.string().optional().nullable(),
+  attachmentUrl: z.string().url().optional().nullable().or(z.literal('').transform(() => null)),
 })
 
 async function nextVoucherNumber(orgId: string, type: 'RECEIPT' | 'PAYMENT'): Promise<string> {
@@ -46,10 +52,30 @@ vouchersRoutes.get('/', async (c) => {
   const where: any = { orgId }
   if (type) where.type = type
 
+  // Filters · ?contactId=... ?invoiceId=... ?billId=... ?bankAccountId=... ?isAdvance=true ?projectId=...
+  const contactId = c.req.query('contactId')
+  const invoiceId = c.req.query('invoiceId')
+  const billId = c.req.query('billId')
+  const bankAccountId = c.req.query('bankAccountId')
+  const isAdvance = c.req.query('isAdvance')
+  const projectId = c.req.query('projectId')
+  if (contactId) where.contactId = contactId
+  if (invoiceId) where.invoiceId = invoiceId
+  if (billId) where.billId = billId
+  if (bankAccountId) where.bankAccountId = bankAccountId
+  if (isAdvance === 'true') where.isAdvance = true
+  if (isAdvance === 'false') where.isAdvance = false
+  if (projectId) where.projectId = projectId
+
   const [items, sumAgg] = await Promise.all([
     prisma.voucher.findMany({
       where,
-      include: { contact: { select: { id: true, displayName: true } } },
+      include: {
+        contact: { select: { id: true, displayName: true } },
+        bankAccount: { select: { id: true, name: true, bankName: true } },
+        project: { select: { id: true, code: true, name: true } },
+        costCenter: { select: { id: true, code: true, name: true } },
+      },
       orderBy: { date: 'desc' },
       take: 200,
     }),
@@ -89,6 +115,22 @@ vouchersRoutes.post('/', zValidator('json', voucherSchema), async (c) => {
     const b = await prisma.bill.findFirst({ where: { id: data.billId, orgId } })
     if (!b) return c.json({ error: 'invalid billId' }, 400)
   }
+  if (data.bankAccountId) {
+    const ba = await prisma.bankAccount.findFirst({ where: { id: data.bankAccountId, orgId } })
+    if (!ba) return c.json({ error: 'invalid bankAccountId' }, 400)
+  }
+  if (data.projectId) {
+    const p = await prisma.project.findFirst({ where: { id: data.projectId, orgId } })
+    if (!p) return c.json({ error: 'invalid projectId' }, 400)
+  }
+  if (data.costCenterId) {
+    const cc = await prisma.costCenter.findFirst({ where: { id: data.costCenterId, orgId } })
+    if (!cc) return c.json({ error: 'invalid costCenterId' }, 400)
+  }
+  // Enforce: advance payment cannot be linked to invoice/bill simultaneously
+  if (data.isAdvance && (data.invoiceId || data.billId)) {
+    return c.json({ error: 'advance_with_link', message: 'الدفعة المقدمة لا تُربط بفاتورة أو سند مشتريات · أزل الربط أو ألغِ الـadvance' }, 400)
+  }
 
   const number = data.number || (await nextVoucherNumber(orgId, data.type))
 
@@ -107,9 +149,33 @@ vouchersRoutes.post('/', zValidator('json', voucherSchema), async (c) => {
         notes: data.notes,
         invoiceId: data.invoiceId || null,
         billId: data.billId || null,
+        bankAccountId: data.bankAccountId || null,
+        isAdvance: data.isAdvance ?? false,
+        projectId: data.projectId || null,
+        costCenterId: data.costCenterId || null,
+        attachmentUrl: data.attachmentUrl || null,
       },
-      include: { contact: true },
+      include: {
+        contact: true,
+        bankAccount: { select: { id: true, name: true, bankName: true } },
+        project: { select: { id: true, code: true, name: true } },
+        costCenter: { select: { id: true, code: true, name: true } },
+      },
     })
+
+    // Update bank account balance for non-cash methods
+    if (data.bankAccountId && data.paymentMethod !== 'CASH') {
+      const delta = data.type === 'RECEIPT' ? data.amount : -data.amount
+      await tx.bankAccount.update({
+        where: { id: data.bankAccountId },
+        data: { balance: { increment: new Prisma.Decimal(delta) } },
+      })
+    }
+
+    // Touch contact lastInteraction
+    if (data.contactId) {
+      await tx.contact.update({ where: { id: data.contactId }, data: { lastInteraction: new Date() } })
+    }
 
     // Auto-update linked invoice / bill
     if (data.invoiceId && data.type === 'RECEIPT') {
@@ -206,6 +272,14 @@ vouchersRoutes.delete('/:id', async (c) => {
           data: { amountPaid: new Prisma.Decimal(newPaid), status },
         })
       }
+    }
+    // Reverse bank account balance change
+    if (exists.bankAccountId && exists.paymentMethod !== 'CASH') {
+      const delta = exists.type === 'RECEIPT' ? -Number(exists.amount) : Number(exists.amount)
+      await tx.bankAccount.update({
+        where: { id: exists.bankAccountId },
+        data: { balance: { increment: new Prisma.Decimal(delta) } },
+      })
     }
     await tx.voucher.delete({ where: { id } })
   })

@@ -467,3 +467,151 @@ agentRoutes.get('/health', (c) =>
     tools: TOOLS.length,
   }),
 )
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/agent/parse-paste · UX-49 · smart paste parser
+//
+// Body: { text: string, hint?: "invoice" | "expense" | "bill" | "voucher" | "auto" }
+// Response: {
+//   kind: "invoice-lines" | "contact-list" | "expense-list" | "unknown",
+//   confidence: number,
+//   rows: any[],
+//   warnings: string[]
+// }
+//
+// Lightweight model · uses Haiku via OpenRouter for cheap structured extraction.
+// Falls back to a deterministic CSV/TSV parser when the model is unavailable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const parsePasteSchema = z.object({
+  text: z.string().min(1).max(50000),
+  hint: z.enum(['invoice', 'expense', 'bill', 'voucher', 'contact', 'auto']).optional().default('auto'),
+})
+
+/** Deterministic CSV/TSV fallback · zero-cost parser that always succeeds for tabular blobs. */
+function fallbackParse(text: string): { kind: string; rows: any[]; confidence: number; warnings: string[] } {
+  const rows = text.split(/\r?\n/).filter((r) => r.trim())
+  if (rows.length === 0) return { kind: 'unknown', rows: [], confidence: 0, warnings: ['empty'] }
+
+  // Detect delimiter
+  const useTab = rows[0].includes('\t')
+  const delim = useTab ? '\t' : ','
+
+  // Heuristic header sniff: first row is header if it has non-numeric cells
+  const first = rows[0].split(delim).map((s) => s.trim())
+  const looksLikeHeader = first.every((c) => isNaN(Number(c)) || /^[a-zA-Z؀-ۿ]/.test(c))
+  const headers = looksLikeHeader
+    ? first.map((h) => h.toLowerCase())
+    : ['description', 'quantity', 'unitPrice'].slice(0, first.length)
+  const dataRows = looksLikeHeader ? rows.slice(1) : rows
+
+  const parsed = dataRows.map((row) => {
+    const cols = row.split(delim).map((c) => c.trim())
+    const obj: any = {}
+    headers.forEach((h, i) => { obj[h] = cols[i] || '' })
+    return obj
+  })
+
+  return {
+    kind: 'invoice-lines',
+    rows: parsed,
+    confidence: looksLikeHeader ? 0.6 : 0.4,
+    warnings: looksLikeHeader ? [] : ['no-header-detected · using default columns'],
+  }
+}
+
+agentRoutes.post('/parse-paste', zValidator('json', parsePasteSchema), async (c) => {
+  const auth = c.get('auth') as any
+  const orgId = c.get('orgId') as string
+  const { text, hint } = c.req.valid('json')
+
+  // No API key → fall back deterministically
+  let resolved
+  try {
+    resolved = await resolveAiKey(orgId)
+  } catch (e: any) {
+    if (e instanceof DisabledByAdminError || e instanceof QuotaExceededError) {
+      return c.json({ ...fallbackParse(text), source: 'fallback', reason: 'ai_disabled' })
+    }
+    throw e
+  }
+  if (!resolved.apiKey) {
+    return c.json({ ...fallbackParse(text), source: 'fallback', reason: 'no_key' })
+  }
+
+  // Cheap Haiku call · structured JSON output
+  const systemPrompt = `You are a paste parser for an Arabic accounting app (Entix Books).
+Input may be: Excel rows · CSV · WhatsApp text · receipt OCR · email body · free-form invoice items.
+Output strict JSON with this schema:
+{
+  "kind": "invoice-lines" | "contact-list" | "expense-list" | "voucher-list" | "unknown",
+  "confidence": 0.0-1.0,
+  "rows": [
+    // for invoice-lines: {description, quantity, unitPrice, taxRate?, notes?}
+    // for contact-list: {displayName, email?, phone?, taxId?, country?}
+    // for expense-list: {category, date?, amount, paymentMethod?, vendorName?, description?}
+  ],
+  "warnings": ["..."]
+}
+Hint from user: ${hint}
+Rules:
+- Normalize Arabic-Indic digits (٠-٩) to Western (0-9).
+- Quantity defaults to 1 if missing.
+- Numbers may use Arabic comma (،) or period · normalize to dot.
+- If text is gibberish or empty, return kind="unknown" with confidence=0.
+- Return ONLY the JSON · no markdown, no commentary.`
+
+  let totalPromptTokens = 0
+  let totalCompletionTokens = 0
+  let totalCost = 0
+  const model = 'anthropic/claude-haiku-4.5'
+
+  try {
+    const r = await fetch(OPENROUTER_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resolved.apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://entix.io',
+        'X-Title': 'Entix Books · Paste Parser',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: text.slice(0, 20000) }, // safety cap
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0,
+        max_tokens: 4000,
+      }),
+    })
+    if (!r.ok) {
+      console.warn('[parse-paste] AI failed · falling back', r.status)
+      return c.json({ ...fallbackParse(text), source: 'fallback', reason: `ai_${r.status}` })
+    }
+    const json = await r.json()
+    const content = json.choices?.[0]?.message?.content || '{}'
+    totalPromptTokens = json.usage?.prompt_tokens || 0
+    totalCompletionTokens = json.usage?.completion_tokens || 0
+    totalCost = estimateCost(model, totalPromptTokens, totalCompletionTokens)
+
+    let parsed: any
+    try { parsed = JSON.parse(content) } catch {
+      return c.json({ ...fallbackParse(text), source: 'fallback', reason: 'invalid_json' })
+    }
+
+    await logAiUsage({
+      orgId, userId: auth.userId,
+      endpoint: '/api/agent/parse-paste', model,
+      source: resolved.source, provider: resolved.provider,
+      promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
+      costUsd: totalCost, successful: true,
+    })
+
+    return c.json({ ...parsed, source: 'ai', model })
+  } catch (e: any) {
+    console.error('[parse-paste] error', e)
+    return c.json({ ...fallbackParse(text), source: 'fallback', reason: 'exception' })
+  }
+})

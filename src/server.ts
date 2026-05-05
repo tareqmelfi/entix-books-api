@@ -25,6 +25,14 @@ import { bankAccountsRoutes } from './routes/bank-accounts.js'
 import { branchesRoutes, costCentersRoutes, projectsRoutes, fixedAssetsRoutes, productsRoutes } from './routes/orgScoped.js'
 import { notificationsRoutes } from './routes/notifications.js'
 import { signRoutes } from './routes/sign.js'
+import { emailRoutes } from './routes/email.js'
+import { loyaltyRoutes } from './routes/loyalty.js'
+import { zatcaRoutes } from './routes/zatca.js'
+import { bankImportRoutes } from './routes/bank-import.js'
+import { payrollRoutes } from './routes/payroll.js'
+import { inventoryRoutes } from './routes/inventory.js'
+import { agentAdvancedRoutes } from './routes/agent-advanced.js'
+import { agentExtractRoutes } from './routes/agent-extract.js'
 import { aiBillingRoutes } from './routes/ai-billing.js'
 
 const app = new Hono()
@@ -105,11 +113,21 @@ orgScoped.route('/projects', projectsRoutes)
 orgScoped.route('/fixed-assets', fixedAssetsRoutes)
 orgScoped.route('/products', productsRoutes)
 orgScoped.route('/notifications', notificationsRoutes)
+orgScoped.route('/loyalty', loyaltyRoutes)
+orgScoped.route('/zatca', zatcaRoutes)
+orgScoped.route('/bank-import', bankImportRoutes)
+orgScoped.route('/payroll', payrollRoutes)
+orgScoped.route('/inventory', inventoryRoutes)
+orgScoped.route('/agent', agentAdvancedRoutes)
+orgScoped.route('/agent', agentExtractRoutes)
 app.route('/api', orgScoped)
 
 // Sign routes mounted at top level so the webhook (POST /api/sign/webhook)
 // is reachable WITHOUT auth · auth is applied per-subroute inside sign.ts
 app.route('/api/sign', signRoutes)
+
+// Email send routes (Resend wrapper · branded templates) · auth handled inside
+app.route('/api/email', emailRoutes)
 
 // AI billing routes (BYOK + hosted credits + admin)
 // Auth handled per-subroute inside ai-billing.ts (requireOrg for self · requireAdmin for cross-org)

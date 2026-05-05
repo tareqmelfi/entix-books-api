@@ -122,6 +122,10 @@ model Organization {
   signatures      SignatureRequest[]
   aiBilling       AiBilling?
   aiUsageLogs     AiUsageLog[]
+  warehouses      Warehouse[]
+  stockLevels     StockLevel[]
+  stockMovements  StockMovement[]
+  loyaltyAccounts LoyaltyAccount[]
 
   @@index([slug])
 }
@@ -189,19 +193,46 @@ enum AccountType {
 model Contact {
   id            String   @id @default(cuid())
   orgId         String
+  /// Legacy enum · kept for backward compatibility · derived from role flags below.
   type          ContactType
+  /// Multi-role flags · a Person can wear several hats simultaneously (UX-46).
+  isCustomer    Boolean  @default(false)
+  isSupplier    Boolean  @default(false)
+  isEmployee    Boolean  @default(false)
+  isShareholder Boolean  @default(false)
+  isFreelancer  Boolean  @default(false)
+  /// "INDIVIDUAL" or "COMPANY" · drives form fields & ZATCA classification (UX-47).
+  entityKind    ContactEntityKind @default(COMPANY)
   displayName   String
   legalName     String?
   email         String?
   phone         String?
+  /// Generic tax-id field · use country-specific labels in UI (VAT/EIN/SIRET/TRN/NIF/etc.).
+  taxId         String?
+  /// KSA-specific · kept for legacy data · new code should use taxId.
   vatNumber     String?
   crNumber      String?
+  /// National ID for individuals (Saudi: 10-digit hawiyya · others: passport/SSN).
+  nationalId    String?
+  /// Foreign-entity flag · drives withholding-tax behavior and currency defaults.
+  isForeign     Boolean  @default(false)
+  /// LEI (Legal Entity Identifier · ISO 17442) · 20 chars · global registry at gleif.org.
+  leiCode       String?
+  /// Withholding-tax rate (%) for foreign entities · 0 if exempt or local.
+  withholdingTaxRate Decimal? @db.Decimal(5, 2)
+  /// Default currency for transactions with this contact (3-letter ISO).
+  defaultCurrency String? @db.VarChar(3)
   addressLine1  String?
   addressLine2  String?
   city          String?
   region        String?
+  /// ISO-3166-1 alpha-2 country code · "SA" "US" "AE" "EG" "JO" "KW" "BH" "QA" "OM" "GB" etc.
   country       String   @default("SA")
   postalCode    String?
+  /// Free-form tags · comma-separated for now · upgrade to Tag relation later.
+  tags          String?
+  /// Last interaction timestamp · for CRM "stale" filtering.
+  lastInteraction DateTime?
   notes         String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
@@ -215,12 +246,143 @@ model Contact {
 
   @@index([orgId])
   @@index([orgId, type])
+  @@index([orgId, isCustomer])
+  @@index([orgId, isSupplier])
+  @@index([orgId, isEmployee])
+  @@index([orgId, country])
 }
 
 enum ContactType {
   CUSTOMER
   SUPPLIER
   BOTH
+}
+
+enum ContactEntityKind {
+  INDIVIDUAL
+  COMPANY
+}
+
+// Loyalty (UX-53) · earn + redeem points per Person
+model LoyaltyAccount {
+  id        String   @id @default(cuid())
+  orgId     String
+  contactId String   @unique
+  /// Current balance (points, not money) · positive = redeemable
+  balance   Int      @default(0)
+  /// Lifetime earned · for tier qualification
+  lifetime  Int      @default(0)
+  /// Tier label · BRONZE | SILVER | GOLD | PLATINUM
+  tier      String   @default("BRONZE")
+  enrolledAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  transactions LoyaltyTransaction[]
+
+  @@index([orgId, contactId])
+  @@index([orgId, tier])
+}
+
+model LoyaltyTransaction {
+  id        String   @id @default(cuid())
+  accountId String
+  /// EARN (positive) or REDEEM (negative) or ADJUST (manual)
+  type      LoyaltyTxType
+  /// Signed delta · +50 for earn, -100 for redeem
+  points    Int
+  /// What triggered it · "invoice:<id>" or "manual" or "campaign:<id>"
+  source    String?
+  description String?
+  createdAt DateTime @default(now())
+
+  account   LoyaltyAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, createdAt])
+}
+
+enum LoyaltyTxType {
+  EARN
+  REDEEM
+  ADJUST
+  EXPIRE
+}
+
+// Inventory · multi-warehouse · WAC / FIFO / LIFO support (UX-59)
+model Warehouse {
+  id        String   @id @default(cuid())
+  orgId     String
+  code      String
+  name      String
+  address   String?
+  isActive  Boolean  @default(true)
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  org             Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  stockLevels     StockLevel[]
+  stockMovements  StockMovement[]
+
+  @@unique([orgId, code])
+  @@index([orgId, isActive])
+}
+
+/// Per-product per-warehouse current stock + WAC cost.
+model StockLevel {
+  id            String   @id @default(cuid())
+  orgId         String
+  productId     String
+  warehouseId   String
+  quantity      Decimal  @default(0) @db.Decimal(18, 4)
+  /// Weighted Average Cost · recomputed on each inbound movement.
+  averageCost   Decimal  @default(0) @db.Decimal(18, 4)
+  /// Last cost · used for LIFO valuations.
+  lastCost      Decimal  @default(0) @db.Decimal(18, 4)
+  updatedAt     DateTime @updatedAt
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, warehouseId])
+  @@index([orgId, productId])
+  @@index([orgId, warehouseId])
+}
+
+/// Append-only stock ledger · drives FIFO/LIFO/WAC math + audit trail.
+model StockMovement {
+  id            String              @id @default(cuid())
+  orgId         String
+  productId     String
+  warehouseId   String
+  type          StockMovementType
+  /// Signed delta · positive = inbound, negative = outbound.
+  quantity      Decimal             @db.Decimal(18, 4)
+  /// Per-unit cost at the time of the movement (for inbound) or COGS used (for outbound).
+  unitCost      Decimal             @default(0) @db.Decimal(18, 4)
+  /// Reference doc id (invoice/bill/transfer/manual)
+  refType       String?             // "INVOICE" | "BILL" | "TRANSFER" | "ADJUSTMENT" | "OPENING"
+  refId         String?
+  notes         String?
+  occurredAt    DateTime            @default(now())
+  createdById   String?
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, productId, occurredAt])
+  @@index([orgId, warehouseId, occurredAt])
+  @@index([refType, refId])
+}
+
+enum StockMovementType {
+  RECEIPT     // inbound from supplier (bill)
+  ISSUE       // outbound to customer (invoice)
+  TRANSFER_IN
+  TRANSFER_OUT
+  ADJUSTMENT  // manual count correction
+  OPENING     // opening balance load
+  RETURN_IN
+  RETURN_OUT
 }
 
 // ============================================================================
@@ -457,6 +619,7 @@ model BankAccount {
 
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   payments Payment[]
+  vouchers Voucher[]
 }
 
 // ============================================================================
@@ -522,7 +685,8 @@ model CostCenter {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  vouchers Voucher[]
 
   @@unique([orgId, code])
 }
@@ -537,7 +701,8 @@ model Project {
   status    String   @default("ACTIVE") // ACTIVE | ON_HOLD | COMPLETED | CANCELLED
   createdAt DateTime @default(now())
 
-  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  vouchers Voucher[]
 
   @@unique([orgId, code])
 }
@@ -618,14 +783,29 @@ model Voucher {
   notes         String?
   invoiceId     String?       // optional · auto-update invoice.amountPaid
   billId        String?       // optional · auto-update bill.amountPaid
+  /// Bank account (for non-cash methods) · UX-45 enrichment
+  bankAccountId String?
+  /// Mark as advance payment · not linked to a specific invoice yet (UX-45)
+  isAdvance     Boolean       @default(false)
+  /// Project / cost center attribution · optional
+  projectId     String?
+  costCenterId  String?
+  /// Attached receipt/proof (R2 key or external URL) · UX-45
+  attachmentUrl String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  contact Contact?     @relation(fields: [contactId], references: [id])
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact     Contact?     @relation(fields: [contactId], references: [id])
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
+  project     Project?     @relation(fields: [projectId], references: [id])
+  costCenter  CostCenter?  @relation(fields: [costCenterId], references: [id])
 
   @@unique([orgId, number])
   @@index([orgId, type, date])
+  @@index([orgId, bankAccountId])
+  @@index([orgId, isAdvance])
+  @@index([orgId, contactId])
 }
 
 enum VoucherType {
