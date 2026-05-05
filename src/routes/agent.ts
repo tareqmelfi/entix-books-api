@@ -13,6 +13,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
+import { resolveAiKey, logAiUsage, estimateCost, QuotaExceededError, DisabledByAdminError } from '../lib/ai-billing.js'
 
 export const agentRoutes = new Hono()
 
@@ -28,7 +29,7 @@ const MODEL_CHAIN = [
   'openai/gpt-4o-mini', // last-resort fallback so the agent never goes fully dark
 ]
 
-async function callOpenRouterWithFallback(payload: any): Promise<{ ok: true; json: any; model: string } | { ok: false; status: number; detail: string; triedModels: string[] }> {
+async function callOpenRouterWithFallback(payload: any, apiKey: string): Promise<{ ok: true; json: any; model: string } | { ok: false; status: number; detail: string; triedModels: string[] }> {
   const tried: string[] = []
   for (const model of MODEL_CHAIN) {
     tried.push(model)
@@ -36,7 +37,7 @@ async function callOpenRouterWithFallback(payload: any): Promise<{ ok: true; jso
       const r = await fetch(OPENROUTER_URL, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${OPENROUTER_KEY}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://entix.io',
           'X-Title': 'Entix Books · Agent',
@@ -55,7 +56,7 @@ async function callOpenRouterWithFallback(payload: any): Promise<{ ok: true; jso
         const r2 = await fetch(OPENROUTER_URL, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${OPENROUTER_KEY}`,
+            Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
             'HTTP-Referer': 'https://entix.io',
             'X-Title': 'Entix Books · Agent',
@@ -339,16 +340,38 @@ const chatSchema = z.object({
 })
 
 agentRoutes.post('/chat', zValidator('json', chatSchema), async (c) => {
-  if (!OPENROUTER_KEY) return c.json({ error: 'agent_disabled', detail: 'OPENROUTER_API_KEY not set' }, 503)
-
-  const orgId = c.get('orgId')
+  const orgId = c.get('orgId') as string
+  const auth = c.get('auth') as { userId: string }
   const { messages } = c.req.valid('json')
+
+  // Resolve API key based on org's billing config (BYOK or HOSTED)
+  let resolved: Awaited<ReturnType<typeof resolveAiKey>>
+  try {
+    resolved = await resolveAiKey(orgId)
+  } catch (e: any) {
+    if (e instanceof QuotaExceededError) {
+      return c.json({
+        error: 'quota_exceeded',
+        detail: e.upgradeHint,
+        monthlyAllocation: e.monthlyAllocation,
+        spentThisPeriod: e.spentThisPeriod,
+        creditBalance: e.creditBalance,
+      }, 402)
+    }
+    if (e instanceof DisabledByAdminError) {
+      return c.json({ error: 'ai_disabled', detail: e.reason || 'تم تعطيل الذكاء الاصطناعي لهذه الشركة من قبل الإدارة' }, 403)
+    }
+    return c.json({ error: 'agent_disabled', detail: e.message || 'AI key not available' }, 503)
+  }
 
   // Tool-calling loop · max 5 turns
   const conversation: any[] = [{ role: 'system', content: SYSTEM_PROMPT }, ...messages]
   const toolResults: any[] = []
 
   let activeModel = MODEL_CHAIN[0]
+  let totalPromptTokens = 0
+  let totalCompletionTokens = 0
+  let totalCost = 0
 
   for (let i = 0; i < 5; i++) {
     const result = await callOpenRouterWithFallback({
@@ -356,22 +379,59 @@ agentRoutes.post('/chat', zValidator('json', chatSchema), async (c) => {
       tools: TOOLS,
       max_tokens: 1500,
       temperature: 0.3,
-    })
+    }, resolved.apiKey)
     if (!result.ok) {
+      // Log failure too
+      await logAiUsage({
+        orgId, userId: auth.userId,
+        endpoint: '/api/agent/chat',
+        model: MODEL_CHAIN[0],
+        source: resolved.source,
+        provider: resolved.provider,
+        costUsd: 0,
+        successful: false,
+        errorCode: 'openrouter_error',
+      })
       return c.json(
         { error: 'openrouter_error', detail: result.detail, triedModels: result.triedModels },
         502,
       )
     }
     activeModel = result.model
+
+    // Accumulate usage stats
+    const usage = result.json.usage || {}
+    totalPromptTokens += usage.prompt_tokens || 0
+    totalCompletionTokens += usage.completion_tokens || 0
+    const turnCost = typeof usage.total_cost === 'number' && usage.total_cost > 0
+      ? usage.total_cost
+      : estimateCost(activeModel, usage.prompt_tokens || 0, usage.completion_tokens || 0)
+    totalCost += turnCost
+
     const msg = result.json.choices?.[0]?.message
-    if (!msg) return c.json({ error: 'no_message' }, 502)
+    if (!msg) {
+      await logAiUsage({
+        orgId, userId: auth.userId,
+        endpoint: '/api/agent/chat', model: activeModel,
+        source: resolved.source, provider: resolved.provider,
+        promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
+        costUsd: totalCost, successful: false, errorCode: 'no_message',
+      })
+      return c.json({ error: 'no_message' }, 502)
+    }
     conversation.push(msg)
 
     const toolCalls = msg.tool_calls || []
     if (!toolCalls.length) {
-      // Final answer
-      return c.json({ message: msg.content, toolResults, model: activeModel })
+      // Final answer · log usage and return
+      await logAiUsage({
+        orgId, userId: auth.userId,
+        endpoint: '/api/agent/chat', model: activeModel,
+        source: resolved.source, provider: resolved.provider,
+        promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
+        costUsd: totalCost, successful: true,
+      })
+      return c.json({ message: msg.content, toolResults, model: activeModel, source: resolved.source })
     }
 
     for (const tc of toolCalls) {
@@ -388,7 +448,15 @@ agentRoutes.post('/chat', zValidator('json', chatSchema), async (c) => {
     }
   }
 
-  return c.json({ message: 'الحد الأقصى من الخطوات تم استنفاده · يرجى تبسيط الطلب', toolResults }, 207)
+  // Loop exhausted · log + return partial
+  await logAiUsage({
+    orgId, userId: auth.userId,
+    endpoint: '/api/agent/chat', model: activeModel,
+    source: resolved.source, provider: resolved.provider,
+    promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
+    costUsd: totalCost, successful: true, errorCode: 'max_turns_reached',
+  })
+  return c.json({ message: 'الحد الأقصى من الخطوات تم استنفاده · يرجى تبسيط الطلب', toolResults, source: resolved.source }, 207)
 })
 
 agentRoutes.get('/health', (c) =>

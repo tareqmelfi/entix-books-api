@@ -15,6 +15,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
+import { resolveAiKey, logAiUsage, estimateCost, QuotaExceededError, DisabledByAdminError } from '../lib/ai-billing.js'
 
 export const ocrRoutes = new Hono()
 
@@ -72,7 +73,7 @@ Rules:
 - "tags" should help classification (e.g. ["restaurant","mada","Q1-2026","food"]) · short kebab-case-ar/en
 - "summary": one Arabic sentence max 120 chars`
 
-async function callOpenRouter(payload: any): Promise<{ ok: true; json: any; model: string } | { ok: false; status: number; detail: string; tried: string[] }> {
+async function callOpenRouter(payload: any, apiKey: string): Promise<{ ok: true; json: any; model: string } | { ok: false; status: number; detail: string; tried: string[] }> {
   const tried: string[] = []
   for (const model of VISION_MODEL_CHAIN) {
     tried.push(model)
@@ -80,7 +81,7 @@ async function callOpenRouter(payload: any): Promise<{ ok: true; json: any; mode
       const r = await fetch(OPENROUTER_URL, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${OPENROUTER_KEY}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
           'HTTP-Referer': 'https://entix.io',
           'X-Title': 'Entix Books · OCR',
@@ -98,7 +99,7 @@ async function callOpenRouter(payload: any): Promise<{ ok: true; json: any; mode
           const r2 = await fetch(OPENROUTER_URL, {
             method: 'POST',
             headers: {
-              Authorization: `Bearer ${OPENROUTER_KEY}`,
+              Authorization: `Bearer ${apiKey}`,
               'Content-Type': 'application/json',
               'HTTP-Referer': 'https://entix.io',
               'X-Title': 'Entix Books · OCR',
@@ -164,10 +165,21 @@ const singleSchema = z.object({
 })
 
 ocrRoutes.post('/extract', zValidator('json', singleSchema), async (c) => {
-  if (!OPENROUTER_KEY) {
-    return c.json({ error: 'ocr_disabled', detail: 'OPENROUTER_API_KEY not set' }, 503)
-  }
+  const orgId = c.get('orgId') as string
+  const auth = c.get('auth') as { userId: string }
   const f = c.req.valid('json')
+
+  let resolved: Awaited<ReturnType<typeof resolveAiKey>>
+  try { resolved = await resolveAiKey(orgId) } catch (e: any) {
+    if (e instanceof QuotaExceededError) {
+      return c.json({ error: 'quota_exceeded', detail: e.upgradeHint, ...e }, 402)
+    }
+    if (e instanceof DisabledByAdminError) {
+      return c.json({ error: 'ai_disabled', detail: e.reason }, 403)
+    }
+    return c.json({ error: 'ocr_disabled', detail: e.message }, 503)
+  }
+
   const result = await callOpenRouter({
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
@@ -176,25 +188,45 @@ ocrRoutes.post('/extract', zValidator('json', singleSchema), async (c) => {
     response_format: { type: 'json_object' },
     max_tokens: 2000,
     temperature: 0,
-  })
+  }, resolved.apiKey)
+
   if (!result.ok) {
+    await logAiUsage({
+      orgId, userId: auth.userId,
+      endpoint: '/api/ocr/extract', model: VISION_MODEL_CHAIN[0],
+      source: resolved.source, provider: resolved.provider,
+      costUsd: 0, successful: false, errorCode: 'openrouter_error',
+    })
     return c.json({ error: 'openrouter_error', detail: result.detail, triedModels: result.tried }, 502)
   }
+
   const content = result.json?.choices?.[0]?.message?.content || ''
   let extracted: any
   try { extracted = JSON.parse(content) } catch {
     const m = content.match(/\{[\s\S]*\}/)
     extracted = m ? JSON.parse(m[0]) : null
   }
+
+  // Cost tracking
+  const usage = result.json?.usage || {}
+  const cost = typeof usage.total_cost === 'number' && usage.total_cost > 0
+    ? usage.total_cost
+    : estimateCost(result.model, usage.prompt_tokens || 0, usage.completion_tokens || 0)
+  await logAiUsage({
+    orgId, userId: auth.userId,
+    endpoint: '/api/ocr/extract', model: result.model,
+    source: resolved.source, provider: resolved.provider,
+    promptTokens: usage.prompt_tokens || 0,
+    completionTokens: usage.completion_tokens || 0,
+    costUsd: cost, successful: !!extracted,
+    errorCode: extracted ? null : 'parse_failed',
+  })
+
   if (!extracted) return c.json({ error: 'parse_failed', raw: content.slice(0, 500) }, 502)
   return c.json({
-    extracted,
-    model: result.model,
-    cost: {
-      promptTokens: result.json.usage?.prompt_tokens,
-      completionTokens: result.json.usage?.completion_tokens,
-      totalCost: result.json.usage?.total_cost,
-    },
+    extracted, model: result.model,
+    cost: { promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens, totalCost: cost },
+    source: resolved.source,
   })
 })
 
@@ -210,13 +242,27 @@ const batchSchema = z.object({
 })
 
 ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
-  if (!OPENROUTER_KEY) {
-    return c.json({ error: 'ocr_disabled', detail: 'OPENROUTER_API_KEY not set' }, 503)
-  }
+  const orgId = c.get('orgId') as string
+  const auth = c.get('auth') as { userId: string }
   const { files, hint } = c.req.valid('json')
+
+  let resolved: Awaited<ReturnType<typeof resolveAiKey>>
+  try { resolved = await resolveAiKey(orgId) } catch (e: any) {
+    if (e instanceof QuotaExceededError) {
+      return c.json({ error: 'quota_exceeded', detail: e.upgradeHint, ...e }, 402)
+    }
+    if (e instanceof DisabledByAdminError) {
+      return c.json({ error: 'ai_disabled', detail: e.reason }, 403)
+    }
+    return c.json({ error: 'ocr_disabled', detail: e.message }, 503)
+  }
 
   // Process in parallel · cap concurrency at 5 to avoid rate limits
   const results: Array<{ fileName?: string; mimeType: string; ok: boolean; extracted?: any; error?: string; model?: string }> = []
+  let totalPromptTokens = 0
+  let totalCompletionTokens = 0
+  let totalCost = 0
+  let primaryModel = VISION_MODEL_CHAIN[0]
   const queue = [...files]
   const workers = Array.from({ length: Math.min(5, files.length) }, async () => {
     while (queue.length > 0) {
@@ -230,7 +276,7 @@ ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
         response_format: { type: 'json_object' },
         max_tokens: 2000,
         temperature: 0,
-      })
+      }, resolved.apiKey)
       if (!r.ok) {
         results.push({ fileName: f.fileName, mimeType: f.mimeType, ok: false, error: r.detail })
         continue
@@ -241,6 +287,16 @@ ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
         const m = content.match(/\{[\s\S]*\}/)
         extracted = m ? JSON.parse(m[0]) : null
       }
+      // Accumulate cost per file
+      const usage = r.json?.usage || {}
+      totalPromptTokens += usage.prompt_tokens || 0
+      totalCompletionTokens += usage.completion_tokens || 0
+      const fileCost = typeof usage.total_cost === 'number' && usage.total_cost > 0
+        ? usage.total_cost
+        : estimateCost(r.model, usage.prompt_tokens || 0, usage.completion_tokens || 0)
+      totalCost += fileCost
+      primaryModel = r.model
+
       if (!extracted) {
         results.push({ fileName: f.fileName, mimeType: f.mimeType, ok: false, error: 'parse_failed' })
         continue
@@ -249,6 +305,16 @@ ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
     }
   })
   await Promise.all(workers)
+
+  // Single aggregate log for the whole batch
+  await logAiUsage({
+    orgId, userId: auth.userId,
+    endpoint: '/api/ocr/extract-batch', model: primaryModel,
+    source: resolved.source, provider: resolved.provider,
+    promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
+    costUsd: totalCost,
+    successful: results.some((r) => r.ok),
+  })
 
   // Build a classification index: by docType · by vendor · by month · by tag
   const byDocType: Record<string, number> = {}
