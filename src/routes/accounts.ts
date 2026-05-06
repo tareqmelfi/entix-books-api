@@ -195,3 +195,93 @@ accountsRoutes.post('/templates/apply', zValidator('json', applyTplSchema), asyn
     message: `تم إنشاء ${Object.keys(created).length} حساب · ${linked} رابط أبوي · ${skipped.length} مكرر`,
   })
 })
+
+// ─── Bulk Import ─────────────────────────────────────────────────────────────
+// POST /accounts/import · accepts an array of rows · auto-detects type from
+// code prefix if missing · links parents by parentCode · returns summary.
+const importRowSchema = z.object({
+  code: z.string().min(1).max(20),
+  name: z.string().min(1).max(120),
+  nameAr: z.string().optional().nullable(),
+  type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE']).optional(),
+  parentCode: z.string().optional().nullable(),
+  description: z.string().optional().nullable(),
+})
+const importSchema = z.object({
+  rows: z.array(importRowSchema).min(1).max(2000),
+  skipExisting: z.boolean().default(true),
+})
+
+function inferTypeFromCode(code: string): 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE' | null {
+  const first = code.charAt(0)
+  if (first === '1') return 'ASSET'
+  if (first === '2') return 'LIABILITY'
+  if (first === '3') return 'EQUITY'
+  if (first === '4') return 'REVENUE'
+  if (first === '5' || first === '6' || first === '7') return 'EXPENSE'
+  return null
+}
+
+accountsRoutes.post('/import', zValidator('json', importSchema), async (c) => {
+  const orgId = c.get('orgId') as string
+  const { rows, skipExisting } = c.req.valid('json')
+
+  const existing = await prisma.account.findMany({ where: { orgId }, select: { id: true, code: true } })
+  const existingByCode = new Map(existing.map(e => [e.code, e.id]))
+
+  // First pass · create
+  const created: Record<string, string> = {}
+  const skipped: string[] = []
+  const errors: Array<{ code: string; reason: string }> = []
+  for (const r of rows) {
+    if (skipExisting && existingByCode.has(r.code)) {
+      skipped.push(r.code)
+      continue
+    }
+    const type = r.type || inferTypeFromCode(r.code)
+    if (!type) {
+      errors.push({ code: r.code, reason: 'cannot_infer_type' })
+      continue
+    }
+    try {
+      const a = await prisma.account.create({
+        data: {
+          orgId,
+          code: r.code,
+          name: r.name,
+          nameAr: r.nameAr || null,
+          type,
+          description: r.description || null,
+        },
+      })
+      created[r.code] = a.id
+    } catch (e: any) {
+      if (e.code === 'P2002') skipped.push(r.code)
+      else errors.push({ code: r.code, reason: e.message })
+    }
+  }
+
+  // Second pass · link parents
+  let linked = 0
+  for (const r of rows) {
+    if (!r.parentCode) continue
+    const childId = created[r.code] || existingByCode.get(r.code)
+    if (!childId) continue
+    const parentId = created[r.parentCode] || existingByCode.get(r.parentCode)
+    if (parentId) {
+      try {
+        await prisma.account.update({ where: { id: childId }, data: { parentId } })
+        linked++
+      } catch {}
+    }
+  }
+
+  return c.json({
+    ok: true,
+    created: Object.keys(created).length,
+    skipped: skipped.length,
+    linked,
+    errors,
+    message: `استورد ${Object.keys(created).length} · ${linked} رابط أبوي · تخطّى ${skipped.length} مكرر · ${errors.length} خطأ`,
+  })
+})
