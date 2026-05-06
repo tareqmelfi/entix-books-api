@@ -1,8 +1,10 @@
--- Inbox · email-to-invoice · UX-81
+-- Inbox · email-to-invoice · UX-81 (idempotent)
 
-CREATE TYPE "InboxStatus" AS ENUM ('RECEIVED', 'EXTRACTED', 'APPROVED', 'REJECTED', 'ERROR');
+DO $$ BEGIN
+  CREATE TYPE "InboxStatus" AS ENUM ('RECEIVED', 'EXTRACTED', 'APPROVED', 'REJECTED', 'ERROR');
+EXCEPTION WHEN duplicate_object THEN null; END $$;
 
-CREATE TABLE "InboxMessage" (
+CREATE TABLE IF NOT EXISTS "InboxMessage" (
   "id" TEXT NOT NULL,
   "orgId" TEXT NOT NULL,
   "fromAddress" TEXT NOT NULL,
@@ -23,7 +25,7 @@ CREATE TABLE "InboxMessage" (
   CONSTRAINT "InboxMessage_pkey" PRIMARY KEY ("id")
 );
 
-CREATE TABLE "InboxAttachment" (
+CREATE TABLE IF NOT EXISTS "InboxAttachment" (
   "id" TEXT NOT NULL,
   "messageId" TEXT NOT NULL,
   "filename" TEXT NOT NULL,
@@ -34,12 +36,16 @@ CREATE TABLE "InboxAttachment" (
   CONSTRAINT "InboxAttachment_pkey" PRIMARY KEY ("id")
 );
 
-CREATE INDEX "InboxMessage_orgId_status_idx" ON "InboxMessage"("orgId", "status");
-CREATE INDEX "InboxMessage_orgId_createdAt_idx" ON "InboxMessage"("orgId", "createdAt");
-CREATE INDEX "InboxAttachment_messageId_idx" ON "InboxAttachment"("messageId");
+CREATE INDEX IF NOT EXISTS "InboxMessage_orgId_status_idx" ON "InboxMessage"("orgId", "status");
+CREATE INDEX IF NOT EXISTS "InboxMessage_orgId_createdAt_idx" ON "InboxMessage"("orgId", "createdAt");
+CREATE INDEX IF NOT EXISTS "InboxAttachment_messageId_idx" ON "InboxAttachment"("messageId");
 
-ALTER TABLE "InboxMessage" ADD CONSTRAINT "InboxMessage_orgId_fkey"
-  FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "InboxMessage" ADD CONSTRAINT "InboxMessage_orgId_fkey"
+    FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
 
-ALTER TABLE "InboxAttachment" ADD CONSTRAINT "InboxAttachment_messageId_fkey"
-  FOREIGN KEY ("messageId") REFERENCES "InboxMessage"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "InboxAttachment" ADD CONSTRAINT "InboxAttachment_messageId_fkey"
+    FOREIGN KEY ("messageId") REFERENCES "InboxMessage"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN null; END $$;
