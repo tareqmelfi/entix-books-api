@@ -129,6 +129,69 @@ aiBillingRoutes.get('/usage', requireOrg, async (c) => {
   return c.json({ items, byEndpoint, byModel })
 })
 
+// ── Test BYOK key health ────────────────────────────────────────────────────
+// Sends a tiny test request through the configured key · returns success/error
+aiBillingRoutes.post('/test-key', requireOrg, async (c) => {
+  const orgId = c.get('orgId') as string
+  const billing = await prisma.aiBilling.findUnique({ where: { orgId } })
+  if (!billing || !billing.byokProvider) {
+    return c.json({ ok: false, error: 'no_key', message: 'لم يُضَف مفتاح BYOK لهذه الشركة' }, 400)
+  }
+  // Decrypt key (lib/byok handles this)
+  let key: string | null = null
+  try {
+    const { decryptByokKey } = await import('../lib/byok.js') as any
+    key = billing.byokKeyEncrypted ? decryptByokKey(billing.byokKeyEncrypted) : null
+  } catch (e: any) {
+    return c.json({ ok: false, error: 'decrypt_failed', message: e?.message || 'failed to decrypt key' })
+  }
+  if (!key) return c.json({ ok: false, error: 'no_key', message: 'المفتاح غير موجود' })
+
+  const t0 = Date.now()
+  try {
+    let endpoint: string, headers: any
+    if (billing.byokProvider === 'openrouter') {
+      endpoint = 'https://openrouter.ai/api/v1/auth/key'
+      headers = { 'Authorization': `Bearer ${key}` }
+    } else if (billing.byokProvider === 'anthropic') {
+      // Anthropic doesn't have a /me endpoint · do a tiny tokens-count call
+      endpoint = 'https://api.anthropic.com/v1/messages/count_tokens'
+      headers = { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' }
+      const res = await fetch(endpoint, {
+        method: 'POST', headers,
+        body: JSON.stringify({ model: 'claude-3-5-haiku-latest', messages: [{ role: 'user', content: 'ping' }] }),
+      })
+      const elapsed = Date.now() - t0
+      if (!res.ok) {
+        const err = await res.text()
+        return c.json({ ok: false, status: res.status, error: 'api_error', message: err.slice(0, 300), elapsedMs: elapsed })
+      }
+      return c.json({ ok: true, provider: 'anthropic', elapsedMs: elapsed, message: 'مفتاح Anthropic يعمل' })
+    } else {
+      return c.json({ ok: false, error: 'unknown_provider' })
+    }
+    const res = await fetch(endpoint, { headers })
+    const elapsed = Date.now() - t0
+    if (!res.ok) {
+      const err = await res.text()
+      return c.json({ ok: false, status: res.status, error: 'api_error', message: err.slice(0, 300), elapsedMs: elapsed })
+    }
+    const data = await res.json() as any
+    return c.json({
+      ok: true,
+      provider: 'openrouter',
+      elapsedMs: elapsed,
+      keyLabel: data?.data?.label,
+      usage: data?.data?.usage,
+      limit: data?.data?.limit,
+      isFreeTier: data?.data?.is_free_tier,
+      message: 'مفتاح OpenRouter يعمل',
+    })
+  } catch (e: any) {
+    return c.json({ ok: false, error: 'network', message: e?.message || 'network failed', elapsedMs: Date.now() - t0 })
+  }
+})
+
 // ── Admin (cross-org) · gated by requireAdmin middleware ────────────────────
 // For now: any authenticated user with email matching ADMIN_EMAILS env list.
 // TODO: proper RBAC + audit log

@@ -164,6 +164,65 @@ orgsRoutes.patch('/:id', zValidator('json', updateOrgSchema), async (c) => {
   return c.json({ ...org, role: m.role })
 })
 
+// ── Team management · invite by email + role + remove ─────────────────────
+const inviteSchema = z.object({
+  email: z.string().email(),
+  role: z.enum(['OWNER', 'ADMIN', 'ACCOUNTANT', 'VIEWER']).default('VIEWER'),
+})
+
+orgsRoutes.post('/:id/members/invite', zValidator('json', inviteSchema), async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const m = await prisma.orgMembership.findUnique({ where: { userId_orgId: { userId: auth.userId, orgId } } })
+  if (!m) return c.json({ error: 'not_a_member' }, 403)
+  if (m.role !== 'OWNER' && m.role !== 'ADMIN') return c.json({ error: 'forbidden' }, 403)
+  const { email, role } = c.req.valid('json')
+
+  // Find or create user · for now we just create membership directly; in production
+  // this should send a magic link email and let the user accept the invite
+  const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() } })
+  if (!user) {
+    // Better-auth requires explicit signup · for now return a partial success with the invite URL
+    const inviteUrl = `${process.env.PUBLIC_FRONTEND_URL || 'https://entix.io'}/signup?invite=${encodeURIComponent(email)}&org=${orgId}`
+    return c.json({ ok: true, pending: true, email, role, inviteUrl, message: 'المستخدم لم يُسجَّل بعد · أرسل له هذا الرابط' })
+  }
+
+  const existing = await prisma.orgMembership.findUnique({ where: { userId_orgId: { userId: user.id, orgId } } })
+  if (existing) return c.json({ error: 'already_member', currentRole: existing.role }, 409)
+
+  const membership = await prisma.orgMembership.create({
+    data: { userId: user.id, orgId, role },
+    include: { user: { select: { id: true, email: true, name: true } } },
+  })
+  return c.json({ ok: true, member: membership }, 201)
+})
+
+orgsRoutes.patch('/:id/members/:memberId', zValidator('json', z.object({ role: z.enum(['OWNER', 'ADMIN', 'ACCOUNTANT', 'VIEWER']) })), async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const memberId = c.req.param('memberId')
+  const m = await prisma.orgMembership.findUnique({ where: { userId_orgId: { userId: auth.userId, orgId } } })
+  if (!m || (m.role !== 'OWNER' && m.role !== 'ADMIN')) return c.json({ error: 'forbidden' }, 403)
+  const target = await prisma.orgMembership.findUnique({ where: { id: memberId } })
+  if (!target || target.orgId !== orgId) return c.json({ error: 'not_found' }, 404)
+  const { role } = c.req.valid('json')
+  await prisma.orgMembership.update({ where: { id: memberId }, data: { role } })
+  return c.json({ ok: true })
+})
+
+orgsRoutes.delete('/:id/members/:memberId', async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const memberId = c.req.param('memberId')
+  const m = await prisma.orgMembership.findUnique({ where: { userId_orgId: { userId: auth.userId, orgId } } })
+  if (!m || (m.role !== 'OWNER' && m.role !== 'ADMIN')) return c.json({ error: 'forbidden' }, 403)
+  const target = await prisma.orgMembership.findUnique({ where: { id: memberId } })
+  if (!target || target.orgId !== orgId) return c.json({ error: 'not_found' }, 404)
+  if (target.userId === auth.userId) return c.json({ error: 'cannot_remove_self' }, 400)
+  await prisma.orgMembership.delete({ where: { id: memberId } })
+  return c.body(null, 204)
+})
+
 // GET /orgs/:id/numbering · returns the numberingSettings JSON
 orgsRoutes.get('/:id/numbering', async (c) => {
   const auth = c.get('auth')
