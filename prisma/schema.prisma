@@ -99,6 +99,14 @@ model Organization {
   crNumber        String?  // KSA: commercial registration
   zatcaEnabled    Boolean  @default(false)
   logoUrl         String?
+  /// Numbering preferences · JSON shape:
+  /// { contact: { prefix: "CUST-", padding: 4, start: 1, includeYear: false },
+  ///   invoice: { prefix: "INV-{YYYY}-", padding: 4, start: 1 },
+  ///   bill:    { prefix: "BILL-{YYYY}-", padding: 4 },
+  ///   quote:   { prefix: "QT-{YYYY}-", padding: 4 },
+  ///   receipt: { prefix: "R-{YYYY}-", padding: 4 },
+  ///   payment: { prefix: "P-{YYYY}-", padding: 4 } }
+  numberingSettings Json?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -194,6 +202,8 @@ enum AccountType {
 model Contact {
   id            String   @id @default(cuid())
   orgId         String
+  /// User-facing custom code (e.g. "EN-CLI-BSMA" or "CUST-001") · auto-generated from numberingSettings if null.
+  customCode    String?
   /// Legacy enum · kept for backward compatibility · derived from role flags below.
   type          ContactType
   /// Multi-role flags · a Person can wear several hats simultaneously (UX-46).

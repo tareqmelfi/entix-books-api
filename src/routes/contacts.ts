@@ -10,10 +10,13 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { prisma } from '../db.js'
+import { nextContactCode } from '../lib/numbering.js'
 
 export const contactsRoutes = new Hono()
 
 const contactSchema = z.object({
+  // User-facing custom code (auto-generated if blank)
+  customCode: z.string().optional().nullable(),
   // Legacy enum (kept · derived from flags if not provided)
   type: z.enum(['CUSTOMER', 'SUPPLIER', 'BOTH']).optional(),
   // Multi-role flags (UX-46)
@@ -147,9 +150,16 @@ contactsRoutes.post('/', zValidator('json', contactSchema), async (c) => {
   // Auto-flag foreign if non-base country (KSA-default for now · later use org's country)
   const isForeign = data.isForeign ?? (data.country !== 'SA')
 
+  // Auto-generate customCode if blank
+  let customCode = data.customCode?.trim() || null
+  if (!customCode) {
+    try { customCode = await nextContactCode(orgId) } catch { /* fall back · leave null */ }
+  }
+
   const contact = await prisma.contact.create({
     data: {
       ...data,
+      customCode,
       type: type!,
       isCustomer: isCustomer!,
       isSupplier: isSupplier!,
@@ -158,6 +168,13 @@ contactsRoutes.post('/', zValidator('json', contactSchema), async (c) => {
     },
   })
   return c.json(contact, 201)
+})
+
+// GET /contacts/_/next-code · returns the next auto-suggested customCode (used by UI before submit)
+contactsRoutes.get('/_/next-code', async (c) => {
+  const orgId = c.get('orgId') as string
+  const code = await nextContactCode(orgId)
+  return c.json({ customCode: code })
 })
 
 // PATCH /contacts/:id

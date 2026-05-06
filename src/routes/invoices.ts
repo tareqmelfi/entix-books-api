@@ -67,15 +67,9 @@ async function calcTotals(lines: z.infer<typeof lineSchema>[], orgId: string) {
 }
 
 async function nextInvoiceNumber(orgId: string): Promise<string> {
-  const year = new Date().getFullYear()
-  const prefix = `INV-${year}-`
-  const last = await prisma.invoice.findFirst({
-    where: { orgId, invoiceNumber: { startsWith: prefix } },
-    orderBy: { invoiceNumber: 'desc' },
-    select: { invoiceNumber: true },
-  })
-  const lastNum = last ? Number(last.invoiceNumber.split('-').pop() || '0') : 0
-  return `${prefix}${String(lastNum + 1).padStart(5, '0')}`
+  // Use org's numbering settings · falls back to defaults
+  const { nextInvoiceNumber: nextFromSettings } = await import('../lib/numbering.js')
+  return nextFromSettings(orgId)
 }
 
 // GET /invoices

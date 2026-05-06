@@ -80,6 +80,21 @@ const updateOrgSchema = z.object({
   crNumber: z.string().optional().nullable(),
   zatcaEnabled: z.boolean().optional(),
   logoUrl: z.string().url().optional().nullable(),
+  numberingSettings: z.any().optional(),
+})
+
+const numberingPerKindSchema = z.object({
+  prefix: z.string().max(60).optional(),
+  padding: z.number().int().min(1).max(10).optional(),
+  start: z.number().int().min(1).optional(),
+})
+const numberingSchema = z.object({
+  contact: numberingPerKindSchema.optional(),
+  invoice: numberingPerKindSchema.optional(),
+  quote: numberingPerKindSchema.optional(),
+  bill: numberingPerKindSchema.optional(),
+  receipt: numberingPerKindSchema.optional(),
+  payment: numberingPerKindSchema.optional(),
 })
 
 orgsRoutes.patch('/:id', zValidator('json', updateOrgSchema), async (c) => {
@@ -93,6 +108,31 @@ orgsRoutes.patch('/:id', zValidator('json', updateOrgSchema), async (c) => {
   const data = c.req.valid('json')
   const org = await prisma.organization.update({ where: { id: orgId }, data })
   return c.json({ ...org, role: m.role })
+})
+
+// GET /orgs/:id/numbering · returns the numberingSettings JSON
+orgsRoutes.get('/:id/numbering', async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const m = await prisma.orgMembership.findUnique({ where: { userId_orgId: { userId: auth.userId, orgId } } })
+  if (!m) return c.json({ error: 'not_a_member' }, 403)
+  const org = await prisma.organization.findUnique({ where: { id: orgId }, select: { numberingSettings: true } })
+  return c.json(org?.numberingSettings || {})
+})
+
+// PATCH /orgs/:id/numbering · updates the numberingSettings JSON
+orgsRoutes.patch('/:id/numbering', zValidator('json', numberingSchema), async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const m = await prisma.orgMembership.findUnique({ where: { userId_orgId: { userId: auth.userId, orgId } } })
+  if (!m) return c.json({ error: 'not_a_member' }, 403)
+  if (m.role !== 'OWNER' && m.role !== 'ADMIN') return c.json({ error: 'forbidden' }, 403)
+  const data = c.req.valid('json')
+  const org = await prisma.organization.update({
+    where: { id: orgId },
+    data: { numberingSettings: data as any },
+  })
+  return c.json(org.numberingSettings || {})
 })
 
 // GET /orgs/:id/members
