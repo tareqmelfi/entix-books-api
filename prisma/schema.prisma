@@ -566,6 +566,10 @@ model Product {
   nameAr      String?
   description String?
   type        ProductType @default(SERVICE)
+  /// Category code · auto-derived from SKU prefix or set manually (e.g. "ADV", "AI", "BRD", "CLD")
+  category    String?
+  /// Subscription billing cycle (only relevant for SUBSCRIPTION type)
+  billingCycle String?    // ONE_TIME | MONTHLY | QUARTERLY | ANNUAL
   unitPrice   Decimal     @default(0) @db.Decimal(18, 4)
   costPrice   Decimal     @default(0) @db.Decimal(18, 4)
   stockQty    Decimal     @default(0) @db.Decimal(18, 4)
@@ -591,6 +595,10 @@ enum ProductType {
   SERVICE
   GOOD
   INVENTORY
+  SUBSCRIPTION
+  PACKAGE
+  BUNDLE
+  DIGITAL
 }
 
 // ============================================================================
