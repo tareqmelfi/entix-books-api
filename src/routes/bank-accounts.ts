@@ -9,8 +9,11 @@ export const bankAccountsRoutes = new Hono()
 const schema = z.object({
   name: z.string().min(1),
   bankName: z.string().optional().nullable(),
+  country: z.string().length(2).optional().nullable().or(z.literal('').transform(() => null)),
   accountNumber: z.string().optional().nullable(),
   iban: z.string().optional().nullable(),
+  swiftCode: z.string().optional().nullable(),
+  routingNumber: z.string().optional().nullable(),
   currency: z.string().length(3).default('SAR'),
   balance: z.coerce.number().default(0),
 })

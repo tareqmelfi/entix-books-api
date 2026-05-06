@@ -37,6 +37,7 @@ import { plaidRoutes } from './routes/plaid.js'
 import { brokersRoutes } from './routes/brokers.js'
 import { aiBillingRoutes } from './routes/ai-billing.js'
 import { inboxRoutes, inboxWebhookRoutes } from './routes/inbox.js'
+import { journalsRoutes } from './routes/journals.js'
 
 const app = new Hono()
 
@@ -126,6 +127,7 @@ orgScoped.route('/agent', agentExtractRoutes)
 orgScoped.route('/plaid', plaidRoutes)
 orgScoped.route('/brokers', brokersRoutes)
 orgScoped.route('/inbox', inboxRoutes)
+orgScoped.route('/journals', journalsRoutes)
 app.route('/api', orgScoped)
 
 // Inbound email webhook · public · validated by X-Inbox-Token header

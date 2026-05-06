@@ -605,18 +605,21 @@ model TaxRate {
 // ============================================================================
 
 model BankAccount {
-  id            String   @id @default(cuid())
-  orgId         String
-  accountId     String?  // links to Account in chart of accounts
-  name          String
-  bankName      String?
-  accountNumber String?
-  iban          String?
-  currency      String   @default("SAR")
-  balance       Decimal  @default(0) @db.Decimal(18, 4)
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(cuid())
+  orgId          String
+  accountId      String?  // links to Account in chart of accounts
+  name           String
+  bankName       String?
+  country        String?  // SA · US · AE · ... (drives which fields are required)
+  accountNumber  String?
+  iban           String?  // KSA · EU · UK · UAE
+  swiftCode      String?  // BIC · 8-11 chars · international wires
+  routingNumber  String?  // US ABA routing · 9 digits
+  currency       String   @default("SAR")
+  balance        Decimal  @default(0) @db.Decimal(18, 4)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   payments Payment[]
