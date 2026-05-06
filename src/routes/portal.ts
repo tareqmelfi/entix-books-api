@@ -14,8 +14,7 @@
  *   POST /api/contacts/:id/portal/disable
  */
 import { Hono } from 'hono'
-import { randomBytes, randomUUID } from 'crypto'
-import { Prisma } from '@prisma/client'
+import { randomBytes } from 'crypto'
 import { prisma } from '../db.js'
 
 export const portalRoutes = new Hono()
@@ -173,7 +172,7 @@ portalRoutes.post('/pay/:invoiceId', async (c) => {
 // ── Org-side endpoints: enable/disable + token refresh ────────────────────
 export const portalAdminRoutes = new Hono()
 
-portalAdminRoutes.post('/:contactId/portal/enable', async (c) => {
+portalAdminRoutes.post('/contacts/:contactId/enable', async (c) => {
   const orgId = c.get('orgId') as string
   const id = c.req.param('contactId')
   const contact = await prisma.contact.findFirst({ where: { id, orgId } })
@@ -187,7 +186,7 @@ portalAdminRoutes.post('/:contactId/portal/enable', async (c) => {
   return c.json({ ok: true, url, token })
 })
 
-portalAdminRoutes.post('/:contactId/portal/disable', async (c) => {
+portalAdminRoutes.post('/contacts/:contactId/disable', async (c) => {
   const orgId = c.get('orgId') as string
   const id = c.req.param('contactId')
   const contact = await prisma.contact.findFirst({ where: { id, orgId } })
@@ -199,7 +198,7 @@ portalAdminRoutes.post('/:contactId/portal/disable', async (c) => {
   return c.json({ ok: true })
 })
 
-portalAdminRoutes.get('/:contactId/portal/url', async (c) => {
+portalAdminRoutes.get('/contacts/:contactId/url', async (c) => {
   const orgId = c.get('orgId') as string
   const id = c.req.param('contactId')
   const contact = await prisma.contact.findFirst({
