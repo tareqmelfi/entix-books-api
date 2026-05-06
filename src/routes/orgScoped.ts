@@ -371,6 +371,57 @@ productsRoutes.post('/seed-fc-catalog', async (c) => {
   })
 })
 
+// ── List industry catalogs available for seeding ────────────────────────────
+productsRoutes.get('/industry-catalogs', async (c) => {
+  const { INDUSTRY_CATALOGS } = await import('../lib/industry-catalogs.js')
+  return c.json({
+    items: INDUSTRY_CATALOGS.map(cat => ({
+      id: cat.id, name: cat.name, nameAr: cat.nameAr,
+      description: cat.description, icon: cat.icon,
+      productCount: cat.products.length,
+    })),
+  })
+})
+
+// ── Seed by industry id ─────────────────────────────────────────────────────
+productsRoutes.post('/seed-industry/:industryId', async (c) => {
+  const orgId = c.get('orgId') as string
+  const industryId = c.req.param('industryId')
+  const { getCatalogById } = await import('../lib/industry-catalogs.js')
+  const catalog = getCatalogById(industryId)
+  if (!catalog) return c.json({ error: 'unknown_industry', message: `لا يوجد كتالوج باسم "${industryId}"` }, 404)
+
+  const existing = await prisma.product.findMany({ where: { orgId }, select: { sku: true } })
+  const existingSkus = new Set(existing.map(e => e.sku).filter(Boolean) as string[])
+
+  let created = 0, skipped = 0
+  for (const p of catalog.products) {
+    if (existingSkus.has(p.sku)) { skipped++; continue }
+    try {
+      await prisma.product.create({
+        data: {
+          orgId,
+          sku: p.sku,
+          name: p.name,
+          nameAr: p.nameAr,
+          type: p.type as any,
+          category: p.category,
+          unitPrice: new Prisma.Decimal(p.unitPrice),
+          costPrice: new Prisma.Decimal(0),
+          stockQty: new Prisma.Decimal(0),
+          description: p.description || null,
+        },
+      })
+      created++
+    } catch { skipped++ }
+  }
+  return c.json({
+    ok: true, created, skipped,
+    message: `تم تثبيت كتالوج ${catalog.nameAr} · ${created} منتج جديد · ${skipped} مكرر`,
+    catalog: { id: catalog.id, nameAr: catalog.nameAr, icon: catalog.icon },
+  })
+})
+
 // ── Categories list (distinct values) ───────────────────────────────────────
 productsRoutes.get('/categories', async (c) => {
   const orgId = c.get('orgId')

@@ -7,13 +7,17 @@ import { INDUSTRY_TEMPLATES, buildCoaForIndustry, BASE_COA, type AccountSeed } f
 export const accountsRoutes = new Hono()
 
 const accountSchema = z.object({
-  code: z.string().min(1).max(20),
-  name: z.string().min(1).max(120),
-  nameAr: z.string().optional().nullable(),
+  code: z.string().min(1).max(40),
+  name: z.string().min(1).max(255),
+  nameAr: z.string().max(500).optional().nullable(),
   type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE']),
   subtype: z.string().optional().nullable(),
   parentId: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
+  cashFlowType: z.enum(['OPERATING', 'INVESTING', 'FINANCING', 'NON_CASH']).optional().nullable(),
+  allowPosting: z.boolean().optional(),
+  allowPayment: z.boolean().optional(),
+  allowExpenseClaim: z.boolean().optional(),
 })
 
 // GET /accounts — full chart of accounts (no pagination · usually < 200 rows)

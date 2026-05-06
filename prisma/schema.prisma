@@ -208,6 +208,12 @@ model Account {
   parentId    String?
   description String?
   isActive    Boolean     @default(true)
+  // Wafeq-style fields
+  cashFlowType    String? // OPERATING | INVESTING | FINANCING | NON_CASH
+  allowPosting    Boolean @default(true)  // can be selected when creating manual journal entries
+  allowPayment    Boolean @default(false) // can be selected when recording payments/vouchers
+  allowExpenseClaim Boolean @default(false) // can be selected in employee expense claims
+  isSystemAccount Boolean @default(false) // protected from edit/delete (auto-created accounts)
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
