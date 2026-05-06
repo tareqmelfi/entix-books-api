@@ -258,6 +258,13 @@ model Contact {
   lastInteraction DateTime?
   notes         String?
   isActive      Boolean  @default(true)
+  // CRM-light + Portal access
+  creditLimit   Decimal? @db.Decimal(18, 2)
+  paymentTerms  Int?     // net days · 0/15/30/60/90
+  portalToken   String?  @unique // for customer/supplier self-serve portal
+  portalEnabled Boolean  @default(false)
+  lifetimeValue Decimal? @db.Decimal(18, 2)
+  riskScore     Int?     // 0-100 · auto-computed by AI
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
