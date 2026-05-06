@@ -230,43 +230,63 @@ Rules:
 - For individual ID cards or 'هوية وطنية', set entityKind=INDIVIDUAL
 - If you can't read the document at all, return confidence=0 and only the fields you found`
 
-  const userContent: any = mimeType.startsWith('image/') || mimeType === 'application/pdf'
+  const isPdf = mimeType === 'application/pdf'
+  const isImage = mimeType.startsWith('image/')
+  const userContent: any = isPdf
     ? [
-        { type: 'text', text: `Extract structured contact data from this ${mimeType === 'application/pdf' ? 'PDF' : 'image'}. File: ${fileName || 'unknown'}` },
+        { type: 'text', text: `Extract structured contact data from this PDF. File: ${fileName || 'unknown'}` },
+        { type: 'file', file: { filename: fileName || 'document.pdf', file_data: `data:application/pdf;base64,${fileBase64}` } },
+      ]
+    : isImage
+    ? [
+        { type: 'text', text: `Extract structured contact data from this image. File: ${fileName || 'unknown'}` },
         { type: 'image_url', image_url: { url: `data:${mimeType};base64,${fileBase64}` } },
       ]
     : `Extract from text:\n${Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 30000)}`
 
+  const MODELS = ['anthropic/claude-haiku-4.5', 'anthropic/claude-3.5-haiku', 'anthropic/claude-3-5-sonnet']
+  let r: Response | null = null
+  let lastDetail = ''
+  for (const model of MODELS) {
+    try {
+      const attempt = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resolved.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://entix.io',
+          'X-Title': 'Entix Books · Contact Extractor',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: SYSTEM },
+            { role: 'user', content: userContent },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0,
+          max_tokens: 1500,
+          plugins: isPdf ? [{ id: 'file-parser', pdf: { engine: 'pdf-text' } }] : undefined,
+        }),
+      })
+      if (attempt.ok) { r = attempt; break }
+      lastDetail = await attempt.text()
+      if (attempt.status === 404 || attempt.status === 400) continue
+      r = attempt; break
+    } catch (e) { lastDetail = String(e) }
+  }
   try {
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${resolved.apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://entix.io',
-        'X-Title': 'Entix Books · Contact Extractor',
-      },
-      body: JSON.stringify({
-        model: 'anthropic/claude-haiku-4.5',
-        messages: [
-          { role: 'system', content: SYSTEM },
-          { role: 'user', content: userContent },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0,
-        max_tokens: 1500,
-      }),
-    })
-    if (!r.ok) {
-      const detail = await r.text()
+    if (!r || !r.ok) {
+      const detail = lastDetail
       let msg = 'فشل قراءة المستند · جرّب صورة أوضح'
       try {
         const j = JSON.parse(detail)
+        if (j?.error?.message) msg = j.error.message
         if (/credit|quota|insufficient/i.test(j?.error?.message || '')) {
           msg = 'رصيد OpenRouter منخفض · شحن الرصيد أو استخدم BYOK'
         }
       } catch {}
-      return c.json({ error: 'extraction_failed', message: msg, raw: detail.slice(0, 200) }, 502)
+      return c.json({ error: 'extraction_failed', message: msg, raw: detail.slice(0, 400) }, 502)
     }
     const j = await r.json() as any
     let parsed: any

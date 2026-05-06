@@ -107,6 +107,12 @@ model Organization {
   ///   receipt: { prefix: "R-{YYYY}-", padding: 4 },
   ///   payment: { prefix: "P-{YYYY}-", padding: 4 } }
   numberingSettings Json?
+  /// Payment provider settings (encrypted at rest in production):
+  /// { stripe: { secretKey: "sk_...", publishableKey: "pk_...", enabled: true },
+  ///   paypal: { clientId: "...", clientSecret: "...", mode: "sandbox|live", enabled: true },
+  ///   moyasar: { secretKey: "...", enabled: false },
+  ///   tamara:  { token: "...", enabled: false } }
+  paymentSettings Json?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

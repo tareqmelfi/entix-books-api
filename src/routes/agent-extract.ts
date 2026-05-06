@@ -25,7 +25,13 @@ import { resolveAiKey, logAiUsage, estimateCost } from '../lib/ai-billing.js'
 export const agentExtractRoutes = new Hono()
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-const VISION_MODEL = 'anthropic/claude-haiku-4.5'
+// Primary + fallback (OpenRouter renames models occasionally)
+const VISION_MODELS = [
+  'anthropic/claude-haiku-4.5',
+  'anthropic/claude-3.5-haiku',
+  'anthropic/claude-3-5-sonnet',
+]
+const VISION_MODEL = VISION_MODELS[0]
 
 const extractSchema = z.object({
   /** base64-encoded file contents (for non-image files use plain text) */
@@ -119,11 +125,26 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
   const isText = mimeType.startsWith('text/') || mimeType.includes('csv')
 
   let userContent: any
-  if (isImage || isPdf) {
+  if (isPdf) {
+    // OpenRouter requires `file` content type for PDFs (Anthropic native PDF support)
     userContent = [
       {
         type: 'text',
-        text: `Extract structured data from this ${isPdf ? 'PDF' : 'image'}. Target: ${target}.${hint ? `\n\nUser hint: ${hint}` : ''}\n\nDefault tax rate: ${defaultTaxRate}\nDefault currency: ${currency}\nFile name: ${fileName || 'unknown'}`,
+        text: `Extract structured data from this PDF. Target: ${target}.${hint ? `\n\nUser hint: ${hint}` : ''}\n\nDefault tax rate: ${defaultTaxRate}\nDefault currency: ${currency}\nFile name: ${fileName || 'unknown'}`,
+      },
+      {
+        type: 'file',
+        file: {
+          filename: fileName || 'document.pdf',
+          file_data: `data:application/pdf;base64,${fileBase64}`,
+        },
+      },
+    ]
+  } else if (isImage) {
+    userContent = [
+      {
+        type: 'text',
+        text: `Extract structured data from this image. Target: ${target}.${hint ? `\n\nUser hint: ${hint}` : ''}\n\nDefault tax rate: ${defaultTaxRate}\nDefault currency: ${currency}\nFile name: ${fileName || 'unknown'}`,
       },
       {
         type: 'image_url',
@@ -137,29 +158,47 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
     return c.json({ error: 'unsupported_type', message: `نوع الملف ${mimeType} غير مدعوم` }, 400)
   }
 
+  // Try each model in order · fall back on transient/model errors
+  let r: Response | null = null
+  let lastDetail = ''
+  let usedModel = VISION_MODELS[0]
+  for (const model of VISION_MODELS) {
+    try {
+      const attempt = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${resolved.apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://entix.io',
+          'X-Title': 'Entix Books · Document Extractor',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userContent },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0,
+          max_tokens: 6000,
+          // Required for PDF parsing on OpenRouter
+          plugins: isPdf ? [{ id: 'file-parser', pdf: { engine: 'pdf-text' } }] : undefined,
+        }),
+      })
+      if (attempt.ok) { r = attempt; usedModel = model; break }
+      lastDetail = await attempt.text()
+      console.warn(`[extract] model ${model} failed (${attempt.status}):`, lastDetail.slice(0, 200))
+      if (attempt.status === 404 || attempt.status === 400) continue // try next model
+      r = attempt; break // auth/quota error · don't retry
+    } catch (fetchErr) {
+      lastDetail = String(fetchErr)
+      continue
+    }
+  }
   try {
-    const r = await fetch(OPENROUTER_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${resolved.apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://entix.io',
-        'X-Title': 'Entix Books · Document Extractor',
-      },
-      body: JSON.stringify({
-        model: VISION_MODEL,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userContent },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0,
-        max_tokens: 6000,
-      }),
-    })
-    if (!r.ok) {
-      const detail = await r.text()
-      console.error('[extract-document] OpenRouter error', r.status, detail)
+    if (!r || !r.ok) {
+      const detail = lastDetail
+      console.error('[extract-document] all models failed', detail)
       let userMsg = 'فشل الاستخراج · جرّب ملفاً أوضح'
       try {
         const j = JSON.parse(detail)
@@ -167,13 +206,17 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
         if (j?.error?.code === 'insufficient_quota' || /credit|quota|insufficient/i.test(j?.error?.message || '')) {
           userMsg = 'رصيد OpenRouter منخفض · شحن الرصيد أو استخدم مفتاحاً خاصاً (BYOK)'
         }
-        if (/model not found/i.test(j?.error?.message || '')) {
-          userMsg = 'النموذج غير متاح حالياً · سيتم التبديل تلقائياً للنموذج البديل'
+        if (/model not found|not_found/i.test(j?.error?.message || '')) {
+          userMsg = 'جميع النماذج غير متاحة حالياً'
+        }
+        if (/file|pdf|attach/i.test(j?.error?.message || '')) {
+          userMsg = 'النموذج لا يدعم هذا الملف · جرّب JPG/PNG'
         }
       } catch {}
-      return c.json({ error: 'extraction_failed', detail: userMsg, raw: detail, status: r.status }, 502)
+      return c.json({ error: 'extraction_failed', detail: userMsg, raw: detail.slice(0, 600), status: r?.status || 502 }, 502)
     }
     const json = await r.json() as any
+    void usedModel
     const content = json.choices?.[0]?.message?.content || '{}'
     const promptTokens = json.usage?.prompt_tokens || 0
     const completionTokens = json.usage?.completion_tokens || 0
