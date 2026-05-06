@@ -114,9 +114,17 @@ model Organization {
   buildingNumber String?  // رقم المبنى
   streetName     String?  // اسم الشارع
   industry       String?  // مجال المنشأة
+  // Org contact info (used on invoices, ZATCA XML, contracts)
+  email          String?
+  phone          String?
+  website        String?
   taxRegistrationDate DateTime?  // تاريخ التسجيل الضريبي الفعلي
   firstVatPeriodStart DateTime?  // تاريخ استحقاق أول إقرار ضريبي
   vatPeriod      String?  // الفترة الضريبية: monthly | quarterly
+  fiscalYearEnd  Int?     // نهاية السنة المالية (1-12) · derives fiscalYearStart = (end mod 12) + 1
+  // US-specific address fields
+  suiteUnit      String?  // Suite / Apt / Unit (US addresses)
+  state          String?  // US state code (WY, CA, ...)
   /// Numbering preferences · JSON shape:
   /// { contact: { prefix: "CUST-", padding: 4, start: 1, includeYear: false },
   ///   invoice: { prefix: "INV-{YYYY}-", padding: 4, start: 1 },

@@ -72,6 +72,13 @@ async function nextInvoiceNumber(orgId: string): Promise<string> {
   return nextFromSettings(orgId)
 }
 
+// GET /invoices/_/next-number · returns the next invoice number without consuming it
+invoicesRoutes.get('/_/next-number', async (c) => {
+  const orgId = c.get('orgId') as string
+  const number = await nextInvoiceNumber(orgId)
+  return c.json({ number })
+})
+
 // GET /invoices
 invoicesRoutes.get('/', async (c) => {
   const orgId = c.get('orgId')

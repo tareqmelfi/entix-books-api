@@ -28,10 +28,15 @@ const createOrgSchema = z.object({
   vatNumber: z.string().optional().nullable(),
   crNumber: z.string().optional().nullable(),
   fiscalYearStart: z.number().int().min(1).max(12).optional(),
+  fiscalYearEnd: z.number().int().min(1).max(12).optional(),
   // Branding
-  logoUrl: z.string().optional().nullable(), // accept data: URLs and https URLs
+  logoUrl: z.string().optional().nullable(),
   stampUrl: z.string().optional().nullable(),
-  // Address
+  // Contact
+  email: z.string().optional().nullable(),
+  phone: z.string().optional().nullable(),
+  website: z.string().optional().nullable(),
+  // Address (Saudi-style)
   addressLine: z.string().optional().nullable(),
   city: z.string().optional().nullable(),
   region: z.string().optional().nullable(),
@@ -39,6 +44,9 @@ const createOrgSchema = z.object({
   district: z.string().optional().nullable(),
   buildingNumber: z.string().optional().nullable(),
   streetName: z.string().optional().nullable(),
+  // Address (US-style)
+  suiteUnit: z.string().optional().nullable(),
+  state: z.string().optional().nullable(),
   industry: z.string().optional().nullable(),
   taxRegistrationDate: z.string().optional().nullable(),
   firstVatPeriodStart: z.string().optional().nullable(),
@@ -50,10 +58,14 @@ orgsRoutes.post('/', zValidator('json', createOrgSchema), async (c) => {
   const auth = c.get('auth')
   const data = c.req.valid('json')
 
-  const { taxRegistrationDate, firstVatPeriodStart, ...rest } = data as any
+  const { taxRegistrationDate, firstVatPeriodStart, fiscalYearEnd, fiscalYearStart, ...rest } = data as any
+  // Derive start from end if only end was given
+  const derivedStart = fiscalYearStart ?? (fiscalYearEnd ? (Number(fiscalYearEnd) % 12) + 1 : 1)
   const org = await prisma.organization.create({
     data: {
       ...rest,
+      fiscalYearStart: derivedStart,
+      fiscalYearEnd: fiscalYearEnd ?? null,
       taxRegistrationDate: taxRegistrationDate ? new Date(taxRegistrationDate) : null,
       firstVatPeriodStart: firstVatPeriodStart ? new Date(firstVatPeriodStart) : null,
       memberships: {
@@ -95,11 +107,15 @@ const updateOrgSchema = z.object({
   country: z.string().length(2).optional(),
   baseCurrency: z.string().length(3).optional(),
   fiscalYearStart: z.number().int().min(1).max(12).optional(),
+  fiscalYearEnd: z.number().int().min(1).max(12).optional(),
   vatNumber: z.string().optional().nullable(),
   crNumber: z.string().optional().nullable(),
   zatcaEnabled: z.boolean().optional(),
-  logoUrl: z.string().optional().nullable(), // accept data: URLs and https URLs
+  logoUrl: z.string().optional().nullable(),
   stampUrl: z.string().optional().nullable(),
+  email: z.string().optional().nullable(),
+  phone: z.string().optional().nullable(),
+  website: z.string().optional().nullable(),
   addressLine: z.string().optional().nullable(),
   city: z.string().optional().nullable(),
   region: z.string().optional().nullable(),
@@ -107,6 +123,8 @@ const updateOrgSchema = z.object({
   district: z.string().optional().nullable(),
   buildingNumber: z.string().optional().nullable(),
   streetName: z.string().optional().nullable(),
+  suiteUnit: z.string().optional().nullable(),
+  state: z.string().optional().nullable(),
   industry: z.string().optional().nullable(),
   taxRegistrationDate: z.string().optional().nullable(),
   firstVatPeriodStart: z.string().optional().nullable(),
