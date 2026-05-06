@@ -134,7 +134,7 @@ portalRoutes.get('/statement', async (c) => {
     rows.push({
       date: p.date,
       description: `دفعة مستلمة`,
-      ref: p.voucherNumber,
+      ref: (p as any).number,
       debit: 0,
       credit: Number(p.amount),
     })
