@@ -364,15 +364,19 @@ accountsRoutes.post('/templates/apply', zValidator('json', applyTplSchema), asyn
 // POST /accounts/import · accepts an array of rows · auto-detects type from
 // code prefix if missing · links parents by parentCode · returns summary.
 const importRowSchema = z.object({
-  code: z.string().min(1).max(20),
-  name: z.string().min(1).max(120),
-  nameAr: z.string().optional().nullable(),
-  type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE']).optional(),
-  parentCode: z.string().optional().nullable(),
-  description: z.string().optional().nullable(),
+  code: z.string().min(1).max(40),
+  name: z.string().min(1).max(255),
+  nameAr: z.string().max(500).optional().nullable(),
+  type: z.union([
+    z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE']),
+    z.literal(''),
+    z.null(),
+  ]).optional().transform(v => v && v !== '' ? v : undefined),
+  parentCode: z.string().max(40).optional().nullable(),
+  description: z.string().max(1000).optional().nullable(),
 })
 const importSchema = z.object({
-  rows: z.array(importRowSchema).min(1).max(2000),
+  rows: z.array(importRowSchema).min(1).max(5000),
   skipExisting: z.boolean().default(true),
 })
 
