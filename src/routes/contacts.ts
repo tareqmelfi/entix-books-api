@@ -177,6 +177,125 @@ contactsRoutes.get('/_/next-code', async (c) => {
   return c.json({ customCode: code })
 })
 
+// POST /contacts/_/extract-from-document · AI reads a CR / EIN letter / Articles
+// of Incorporation and returns extracted fields ready to pre-fill the wizard.
+const extractDocSchema = z.object({
+  fileBase64: z.string().min(1).max(140_000_000),
+  fileName: z.string().optional(),
+  mimeType: z.string().default('application/pdf'),
+})
+contactsRoutes.post('/_/extract-from-document', zValidator('json', extractDocSchema), async (c) => {
+  const orgId = c.get('orgId') as string
+  const { fileBase64, fileName, mimeType } = c.req.valid('json')
+
+  // Resolve AI key
+  let resolved
+  try {
+    const { resolveAiKey } = await import('../lib/ai-billing.js')
+    resolved = await resolveAiKey(orgId)
+  } catch (e: any) {
+    return c.json({ error: 'ai_disabled', message: e?.message || 'الذكاء غير مفعّل' }, 503)
+  }
+  if (!resolved.apiKey) return c.json({ error: 'no_key' }, 503)
+
+  const SYSTEM = `You read commercial registration / tax / incorporation documents (KSA, US, UAE, EG, GB)
+and extract a clean contact profile.
+
+Output strict JSON only · no markdown:
+{
+  "displayName": "<short name as-shown on doc>",
+  "legalName":   "<full legal name>",
+  "entityKind":  "INDIVIDUAL" | "COMPANY",
+  "country":     "<ISO 3166-1 alpha-2 like SA / US / AE / EG / GB>",
+  "vatNumber":   "<VAT/EIN/TRN · digits only OR formatted as on the doc>",
+  "crNumber":    "<KSA commercial registration · digits only>",
+  "nationalId":  "<for individuals>",
+  "addressLine1": "...",
+  "city":        "...",
+  "region":      "...",
+  "postalCode":  "...",
+  "phone":       "...",
+  "email":       "...",
+  "isCustomer":  true,
+  "isSupplier":  false,
+  "confidence":  0.0-1.0,
+  "notes":       "<one short line in Arabic with summary>"
+}
+
+Rules:
+- KSA CR (السجل التجاري) is 10 digits (often starts with 1010 / 7000 / 4030)
+- KSA VAT (الرقم الضريبي) is 15 digits (often starts with 3 and ends with 003)
+- US EIN is 9 digits formatted XX-XXXXXXX
+- Strip Arabic-Indic digits to Western (٠-٩ → 0-9)
+- For individual ID cards or 'هوية وطنية', set entityKind=INDIVIDUAL
+- If you can't read the document at all, return confidence=0 and only the fields you found`
+
+  const userContent: any = mimeType.startsWith('image/') || mimeType === 'application/pdf'
+    ? [
+        { type: 'text', text: `Extract structured contact data from this ${mimeType === 'application/pdf' ? 'PDF' : 'image'}. File: ${fileName || 'unknown'}` },
+        { type: 'image_url', image_url: { url: `data:${mimeType};base64,${fileBase64}` } },
+      ]
+    : `Extract from text:\n${Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 30000)}`
+
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resolved.apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://entix.io',
+        'X-Title': 'Entix Books · Contact Extractor',
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-haiku-4.5',
+        messages: [
+          { role: 'system', content: SYSTEM },
+          { role: 'user', content: userContent },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0,
+        max_tokens: 1500,
+      }),
+    })
+    if (!r.ok) {
+      const detail = await r.text()
+      let msg = 'فشل قراءة المستند · جرّب صورة أوضح'
+      try {
+        const j = JSON.parse(detail)
+        if (/credit|quota|insufficient/i.test(j?.error?.message || '')) {
+          msg = 'رصيد OpenRouter منخفض · شحن الرصيد أو استخدم BYOK'
+        }
+      } catch {}
+      return c.json({ error: 'extraction_failed', message: msg, raw: detail.slice(0, 200) }, 502)
+    }
+    const j = await r.json() as any
+    let parsed: any
+    try { parsed = JSON.parse(j.choices?.[0]?.message?.content || '{}') } catch { parsed = {} }
+
+    return c.json({
+      displayName: parsed.displayName || null,
+      legalName: parsed.legalName || null,
+      entityKind: parsed.entityKind || 'COMPANY',
+      country: parsed.country || 'SA',
+      vatNumber: parsed.vatNumber || null,
+      crNumber: parsed.crNumber || null,
+      nationalId: parsed.nationalId || null,
+      addressLine1: parsed.addressLine1 || null,
+      city: parsed.city || null,
+      region: parsed.region || null,
+      postalCode: parsed.postalCode || null,
+      phone: parsed.phone || null,
+      email: parsed.email || null,
+      isCustomer: parsed.isCustomer ?? true,
+      isSupplier: parsed.isSupplier ?? false,
+      confidence: parsed.confidence ?? 0.5,
+      notes: parsed.notes || null,
+    })
+  } catch (e: any) {
+    return c.json({ error: 'exception', message: e?.message || 'unknown' }, 500)
+  }
+})
+
 // PATCH /contacts/:id
 contactsRoutes.patch('/:id', zValidator('json', contactSchema.partial()), async (c) => {
   const orgId = c.get('orgId')
