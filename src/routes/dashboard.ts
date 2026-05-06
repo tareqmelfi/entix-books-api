@@ -141,6 +141,44 @@ dashboardRoutes.get('/summary', async (c) => {
     take: 8,
   })
 
+  // Income breakdown by revenue account (YTD) — combines invoices + posted journal entries
+  // Pulls from journal lines hitting REVENUE accounts, grouped by account name (Wave-style)
+  const incomeJournalLines = await prisma.journalLine.findMany({
+    where: {
+      journal: { orgId, isPosted: true, date: { gte: yearStart } },
+      account: { type: 'REVENUE' },
+    },
+    select: {
+      debit: true,
+      credit: true,
+      account: { select: { code: true, name: true, nameAr: true } },
+    },
+  })
+  const incomeMap = new Map<string, { code: string; name: string; total: number }>()
+  for (const l of incomeJournalLines) {
+    const key = l.account.code
+    const name = l.account.nameAr || l.account.name
+    const amt = Number(l.credit) - Number(l.debit)
+    const cur = incomeMap.get(key) || { code: key, name, total: 0 }
+    cur.total += amt
+    incomeMap.set(key, cur)
+  }
+  // Add invoice subtotals to "المبيعات" / Sales (default revenue category) if no journal yet
+  const invoiceYtd = await prisma.invoice.aggregate({
+    where: { orgId, issueDate: { gte: yearStart } },
+    _sum: { subtotal: true },
+  })
+  const invoiceSubtotal = Number(invoiceYtd._sum.subtotal || 0)
+  if (invoiceSubtotal > 0) {
+    const k = '_invoices_'
+    incomeMap.set(k, { code: 'SALES', name: 'مبيعات (فواتير)', total: invoiceSubtotal })
+  }
+  const incomeBreakdown = Array.from(incomeMap.values())
+    .filter(x => x.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 8)
+    .map(x => ({ category: x.name, code: x.code, total: x.total }))
+
   // AR (receivable from customers) + AP (payable to suppliers)
   const [arOpen, apOpen] = await Promise.all([
     prisma.invoice.aggregate({
@@ -229,6 +267,7 @@ dashboardRoutes.get('/summary', async (c) => {
       category: e.category || 'غير مصنّف',
       total: Number(e._sum.total || 0),
     })),
+    incomeBreakdown,
     overdueInvoices: overdueInvoices.map((i) => ({
       id: i.id,
       number: i.invoiceNumber,
