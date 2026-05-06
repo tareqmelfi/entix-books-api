@@ -113,7 +113,7 @@ dashboardRoutes.get('/summary', async (c) => {
       _sum: { total: true, amountPaid: true },
     }),
     prisma.bill.aggregate({
-      where: { orgId, status: { in: ['UNPAID', 'PARTIAL', 'OVERDUE'] } as any },
+      where: { orgId, status: { in: ['RECEIVED', 'PARTIAL', 'OVERDUE'] } },
       _sum: { total: true, amountPaid: true },
     }),
   ])

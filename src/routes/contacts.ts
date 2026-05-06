@@ -262,8 +262,9 @@ contactsRoutes.get('/:id/summary', async (c) => {
       take: 20,
       select: { id: true, number: true, type: true, date: true, amount: true, currency: true, paymentMethod: true, reference: true, notes: true },
     }),
+    // Expense model has no FK to Contact yet · match by free-text vendorName
     prisma.expense.findMany({
-      where: { orgId, contactId: id },
+      where: { orgId, vendorName: { equals: contact.displayName, mode: 'insensitive' } },
       orderBy: { date: 'desc' },
       take: 10,
       select: { id: true, date: true, total: true, category: true, description: true, currency: true },

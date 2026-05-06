@@ -192,34 +192,34 @@ inboxRoutes.post('/:id/approve', async (c) => {
   const taxTotal = lines.reduce((s, l) => s + (Number(l.unitPrice || 0) * Number(l.quantity || 1) * Number(l.taxRate || 0)), 0)
   const total = ex.totals?.total ? Number(ex.totals.total) : subtotal + taxTotal
 
+  const issueDate = ex.issueDate ? new Date(ex.issueDate) : new Date()
+  const dueDate = ex.dueDate ? new Date(ex.dueDate) : new Date(issueDate.getTime() + 30 * 86_400_000)
+
+  const refNote = ex.documentNumber ? `Ref: ${ex.documentNumber} · ` : ''
   const bill = await prisma.bill.create({
     data: {
       orgId,
       contactId,
       billNumber,
-      issueDate: ex.issueDate ? new Date(ex.issueDate) : new Date(),
-      dueDate: ex.dueDate ? new Date(ex.dueDate) : null,
+      issueDate,
+      dueDate,
       currency: ex.currency || 'SAR',
       subtotal: new Prisma.Decimal(subtotal),
       taxTotal: new Prisma.Decimal(taxTotal),
-      discount: new Prisma.Decimal(ex.totals?.discount || 0),
       total: new Prisma.Decimal(total),
       status: 'DRAFT',
-      notes: `استورد من البريد · ${m.subject} (${m.fromAddress})`,
-      reference: ex.documentNumber || null,
-      createdById: auth?.userId || null,
+      notes: `${refNote}استورد من البريد · ${m.subject} (${m.fromAddress})`,
       lines: {
         create: lines.map((l: any) => ({
           description: l.description || '—',
           quantity: new Prisma.Decimal(l.quantity || 1),
           unitPrice: new Prisma.Decimal(l.unitPrice || 0),
-          taxRate: new Prisma.Decimal(l.taxRate || 0.15),
-          taxInclusive: !!l.taxInclusive,
           subtotal: new Prisma.Decimal(Number(l.unitPrice || 0) * Number(l.quantity || 1)),
         })),
       },
     },
   })
+  void auth // silence unused
 
   await prisma.inboxMessage.update({
     where: { id: m.id },
