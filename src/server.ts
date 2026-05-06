@@ -42,6 +42,7 @@ import { brokersRoutes } from './routes/brokers.js'
 import { aiBillingRoutes } from './routes/ai-billing.js'
 import { inboxRoutes, inboxWebhookRoutes } from './routes/inbox.js'
 import { journalsRoutes } from './routes/journals.js'
+import { oauthRoutes } from './routes/oauth.js'
 
 const app = new Hono()
 
@@ -145,6 +146,10 @@ app.route('/api/portal', portalRoutes)
 // Sign routes mounted at top level so the webhook (POST /api/sign/webhook)
 // is reachable WITHOUT auth · auth is applied per-subroute inside sign.ts
 app.route('/api/sign', signRoutes)
+
+// OAuth routes (Stripe Connect · PayPal Partner Referrals · status)
+// Mounted at top level · /callback is public (Stripe/PayPal redirects), /start /disconnect /status check session inline
+app.route('/api/oauth', oauthRoutes)
 
 // Email send routes (Resend wrapper · branded templates) · auth handled inside
 app.route('/api/email', emailRoutes)
