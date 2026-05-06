@@ -41,18 +41,15 @@ zatcaRoutes.post('/invoices/:id/process', async (c) => {
   const isStandard = !!invoice.contact?.vatNumber || !!(invoice as any).contact?.taxId
   const subType = isStandard ? '0100000' : '0200000'
 
-  // Look up previous invoice's hash for chain
-  const prev = await prisma.invoice.findFirst({
-    where: { orgId, zatcaUuid: { not: null } },
-    orderBy: { createdAt: 'desc' },
-    select: { zatcaXml: true },
+  // Use stored running chain hash (PIH) — much faster than recomputing every time
+  const previousInvoiceHash = (org as any).zatcaPih || ''
+  // Increment ICV atomically and read new value for this invoice
+  const updated = await prisma.organization.update({
+    where: { id: orgId },
+    data: { zatcaIcv: { increment: 1 } },
+    select: { zatcaIcv: true },
   })
-  // Compute previous hash if available · base64 SHA-256 of cleared XML
-  let previousInvoiceHash = ''
-  if (prev?.zatcaXml) {
-    const { createHash } = await import('crypto')
-    previousInvoiceHash = createHash('sha256').update(prev.zatcaXml, 'utf-8').digest('base64')
-  }
+  const icv = updated.zatcaIcv
 
   const issueDateStr = invoice.issueDate.toISOString().slice(0, 10)
   const issueTimeStr = invoice.issueDate.toISOString().slice(11, 19)
@@ -66,7 +63,7 @@ zatcaRoutes.post('/invoices/:id/process', async (c) => {
     invoiceSubTypeCode: subType,
     currency: invoice.currency,
     previousInvoiceHash,
-    icv: 1, // TODO · per-org counter
+    icv,
     seller: {
       vatNumber: org.vatNumber,
       crNumber: org.crNumber || undefined,
@@ -126,6 +123,13 @@ zatcaRoutes.post('/invoices/:id/process', async (c) => {
     },
   })
 
+  // Update running PIH chain on org if invoice processed (SHA-256 base64 of cleared XML)
+  if (result.status !== 'ERROR' && result.xml) {
+    const { createHash } = await import('crypto')
+    const newPih = createHash('sha256').update(result.xml, 'utf-8').digest('base64')
+    await prisma.organization.update({ where: { id: orgId }, data: { zatcaPih: newPih } })
+  }
+
   return c.json({
     ok: result.status !== 'ERROR',
     status: result.status,
@@ -152,4 +156,72 @@ zatcaRoutes.get('/invoices/:id/xml', async (c) => {
   c.header('Content-Type', 'application/xml; charset=utf-8')
   c.header('Content-Disposition', `attachment; filename="${invoice.invoiceNumber}.xml"`)
   return c.body(invoice.zatcaXml)
+})
+
+// ── /status · current ZATCA state for the active org ──────────────────────
+zatcaRoutes.get('/status', async (c) => {
+  const orgId = c.get('orgId') as string
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: {
+      vatNumber: true,
+      crNumber: true,
+      zatcaEnabled: true,
+      zatcaCsid: true,
+      zatcaCsidSecret: true,
+      zatcaMode: true,
+      zatcaIcv: true,
+      zatcaPih: true,
+    },
+  }) as any
+  if (!org) return c.json({ error: 'org_not_found' }, 404)
+
+  const csidConfigured = !!(org.zatcaCsid && org.zatcaCsidSecret)
+  const ready = !!(org.vatNumber && org.zatcaEnabled && csidConfigured)
+
+  const stats = await prisma.invoice.aggregate({
+    where: { orgId, zatcaStatus: { not: null } },
+    _count: { _all: true },
+  })
+
+  return c.json({
+    enabled: org.zatcaEnabled,
+    mode: org.zatcaMode || 'sandbox',
+    vatNumber: org.vatNumber,
+    crNumber: org.crNumber,
+    csidConfigured,
+    icv: org.zatcaIcv,
+    pihExists: !!org.zatcaPih,
+    invoicesProcessed: stats._count._all,
+    ready,
+    nextActions: !org.vatNumber ? 'أضف الرقم الضريبي'
+      : !org.zatcaEnabled ? 'فعّل ZATCA من الإعدادات'
+      : !csidConfigured ? 'سجّل CSID (مفتاح + كلمة سر) من بوابة ZATCA'
+      : 'جاهز للترحيل',
+  })
+})
+
+// ── /onboard · save CSID + secret obtained from ZATCA portal ──────────────
+zatcaRoutes.post('/onboard', async (c) => {
+  const orgId = c.get('orgId') as string
+  const body = await c.req.json()
+  const { csid, csidSecret, mode } = body || {}
+  if (!csid || !csidSecret) return c.json({ error: 'csid_and_secret_required' }, 400)
+  await prisma.organization.update({
+    where: { id: orgId },
+    data: {
+      zatcaEnabled: true,
+      zatcaCsid: String(csid),
+      zatcaCsidSecret: String(csidSecret),
+      zatcaMode: mode === 'production' ? 'production' : mode === 'simulation' ? 'simulation' : 'sandbox',
+    },
+  })
+  return c.json({ ok: true })
+})
+
+// ── /reset-icv · restart counter (for testing only) ────────────────────────
+zatcaRoutes.post('/reset-icv', async (c) => {
+  const orgId = c.get('orgId') as string
+  await prisma.organization.update({ where: { id: orgId }, data: { zatcaIcv: 0, zatcaPih: null } })
+  return c.json({ ok: true, message: 'تم إعادة ضبط العدّاد · استخدم في البيئة التجريبية فقط' })
 })

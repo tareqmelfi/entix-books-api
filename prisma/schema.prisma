@@ -98,6 +98,11 @@ model Organization {
   vatNumber       String?  // KSA: 15-digit · US: EIN
   crNumber        String?  // KSA: commercial registration
   zatcaEnabled    Boolean  @default(false)
+  zatcaCsid       String?  // ZATCA-issued cryptographic stamp ID (base64)
+  zatcaCsidSecret String?  // ZATCA-issued secret token (base64)
+  zatcaMode       String?  @default("sandbox") // sandbox | simulation | production
+  zatcaIcv        Int      @default(0) // Invoice Counter Value · auto-increments per invoice
+  zatcaPih        String?  @db.Text // Previous Invoice Hash (running chain)
   logoUrl         String?
   /// Numbering preferences · JSON shape:
   /// { contact: { prefix: "CUST-", padding: 4, start: 1, includeYear: false },
