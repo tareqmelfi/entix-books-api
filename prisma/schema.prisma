@@ -667,8 +667,9 @@ model JournalEntry {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  org   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  lines JournalLine[]
+  org         Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lines       JournalLine[]
+  attachments JournalAttachment[]
 
   @@unique([orgId, entryNumber])
   @@index([orgId, date])
@@ -687,6 +688,21 @@ model JournalLine {
 
   @@index([journalId])
   @@index([accountId])
+}
+
+model JournalAttachment {
+  id          String   @id @default(cuid())
+  journalId   String
+  filename    String
+  contentType String
+  sizeBytes   Int
+  url         String   // R2/data: URL
+  uploadedBy  String?  // userId
+  createdAt   DateTime @default(now())
+
+  journal JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@index([journalId])
 }
 
 // ============================================================================

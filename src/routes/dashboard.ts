@@ -7,6 +7,38 @@ import { prisma } from '../db.js'
 
 export const dashboardRoutes = new Hono()
 
+// ── Journal-based revenue/expense aggregation ────────────────────────────────
+// Includes ALL posted manual journal entries hitting REVENUE / EXPENSE accounts.
+// REVENUE = credit-credit account: revenue = SUM(credit) - SUM(debit)
+// EXPENSE = debit-debit account:   expense = SUM(debit) - SUM(credit)
+async function journalTotals(
+  orgId: string,
+  dateFilter?: { gte?: Date; lt?: Date },
+) {
+  const where: any = { orgId, isPosted: true }
+  if (dateFilter) where.date = dateFilter
+  const lines = await prisma.journalLine.findMany({
+    where: {
+      journal: where,
+      account: { type: { in: ['REVENUE', 'EXPENSE'] } },
+    },
+    select: {
+      debit: true,
+      credit: true,
+      account: { select: { type: true } },
+    },
+  })
+  let revenue = 0
+  let expense = 0
+  for (const l of lines) {
+    const d = Number(l.debit)
+    const c = Number(l.credit)
+    if (l.account.type === 'REVENUE') revenue += c - d
+    else if (l.account.type === 'EXPENSE') expense += d - c
+  }
+  return { revenue, expense }
+}
+
 dashboardRoutes.get('/summary', async (c) => {
   const orgId = c.get('orgId')
   const now = new Date()
@@ -30,6 +62,7 @@ dashboardRoutes.get('/summary', async (c) => {
     contactCount,
     vatPayable,
     vatRefundable,
+    journalAllTime,
   ] = await Promise.all([
     prisma.invoice.aggregate({ where: { orgId }, _sum: { total: true } }),
     prisma.bill.aggregate({ where: { orgId }, _sum: { total: true } }),
@@ -41,18 +74,19 @@ dashboardRoutes.get('/summary', async (c) => {
     prisma.contact.count({ where: { orgId, isActive: true } }),
     prisma.invoice.aggregate({ where: { orgId }, _sum: { taxTotal: true } }),
     prisma.bill.aggregate({ where: { orgId }, _sum: { taxTotal: true } }),
+    journalTotals(orgId),
   ])
 
   const vatOutput = Number(vatPayable._sum.taxTotal || 0)
   const vatInput = Number(vatRefundable._sum.taxTotal || 0)
   const vatNet = vatOutput - vatInput
 
-  // 6-month revenue vs expenses (chart data)
+  // 6-month revenue vs expenses (chart data) — combines invoices + expenses + journal entries
   const monthlyTrend: Array<{ month: string; revenue: number; expenses: number }> = []
   for (let i = 5; i >= 0; i--) {
     const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1)
     const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
-    const [r, e] = await Promise.all([
+    const [r, e, j] = await Promise.all([
       prisma.invoice.aggregate({
         where: { orgId, issueDate: { gte: monthStart, lt: monthEnd } },
         _sum: { total: true },
@@ -61,12 +95,13 @@ dashboardRoutes.get('/summary', async (c) => {
         where: { orgId, date: { gte: monthStart, lt: monthEnd } },
         _sum: { total: true },
       }),
+      journalTotals(orgId, { gte: monthStart, lt: monthEnd }),
     ])
     const monthName = monthStart.toLocaleDateString('ar-SA', { month: 'short' })
     monthlyTrend.push({
       month: monthName,
-      revenue: Number(r._sum.total || 0),
-      expenses: Number(e._sum.total || 0),
+      revenue: Number(r._sum.total || 0) + j.revenue,
+      expenses: Number(e._sum.total || 0) + j.expense,
     })
   }
 
@@ -145,36 +180,38 @@ dashboardRoutes.get('/summary', async (c) => {
     net: m.revenue - m.expenses,
   }))
 
-  // This vs last period (this month vs last month)
+  // This vs last period (this month vs last month) — combines invoices + expenses + journals
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
   const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1)
-  const [thisMonthRev, thisMonthExp, lastMonthRev, lastMonthExp] = await Promise.all([
+  const [thisMonthRev, thisMonthExp, lastMonthRev, lastMonthExp, journalThis, journalLast] = await Promise.all([
     prisma.invoice.aggregate({ where: { orgId, issueDate: { gte: startOfMonth } }, _sum: { total: true } }),
     prisma.expense.aggregate({ where: { orgId, date: { gte: startOfMonth } }, _sum: { total: true } }),
     prisma.invoice.aggregate({ where: { orgId, issueDate: { gte: lastMonthStart, lt: lastMonthEnd } }, _sum: { total: true } }),
     prisma.expense.aggregate({ where: { orgId, date: { gte: lastMonthStart, lt: lastMonthEnd } }, _sum: { total: true } }),
+    journalTotals(orgId, { gte: startOfMonth }),
+    journalTotals(orgId, { gte: lastMonthStart, lt: lastMonthEnd }),
   ])
+  const thisRev = Number(thisMonthRev._sum.total || 0) + journalThis.revenue
+  const thisExp = Number(thisMonthExp._sum.total || 0) + journalThis.expense
+  const lastRev = Number(lastMonthRev._sum.total || 0) + journalLast.revenue
+  const lastExp = Number(lastMonthExp._sum.total || 0) + journalLast.expense
   const periodCompare = {
-    thisMonth: {
-      revenue: Number(thisMonthRev._sum.total || 0),
-      expenses: Number(thisMonthExp._sum.total || 0),
-      net: Number(thisMonthRev._sum.total || 0) - Number(thisMonthExp._sum.total || 0),
-    },
-    lastMonth: {
-      revenue: Number(lastMonthRev._sum.total || 0),
-      expenses: Number(lastMonthExp._sum.total || 0),
-      net: Number(lastMonthRev._sum.total || 0) - Number(lastMonthExp._sum.total || 0),
-    },
+    thisMonth: { revenue: thisRev, expenses: thisExp, net: thisRev - thisExp },
+    lastMonth: { revenue: lastRev, expenses: lastExp, net: lastRev - lastExp },
   }
 
   return c.json({
     org,
     kpi: {
-      revenue: Number(revenueTotal._sum.total || 0),
+      revenue: Number(revenueTotal._sum.total || 0) + journalAllTime.revenue,
       purchases: Number(purchasesTotal._sum.total || 0),
-      expenses: Number(expenseTotal._sum.total || 0),
+      expenses: Number(expenseTotal._sum.total || 0) + journalAllTime.expense,
       receipts: Number(receiptTotal._sum.amount || 0),
       payments: Number(paymentTotal._sum.amount || 0),
+      revenueFromInvoices: Number(revenueTotal._sum.total || 0),
+      revenueFromJournal: journalAllTime.revenue,
+      expensesFromBills: Number(expenseTotal._sum.total || 0),
+      expensesFromJournal: journalAllTime.expense,
       vatOutput,
       vatInput,
       vatNet,
