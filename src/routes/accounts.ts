@@ -18,6 +18,8 @@ const accountSchema = z.object({
 
 // GET /accounts — full chart of accounts (no pagination · usually < 200 rows)
 // Auto-seeds BASE_COA on first read if the org has no accounts (so new orgs aren't empty).
+// Also returns balance per account = SUM(debit) - SUM(credit) for asset/expense ·
+// SUM(credit) - SUM(debit) for liability/equity/revenue (so balances are positive in normal accounting).
 accountsRoutes.get('/', async (c) => {
   const orgId = c.get('orgId')
   let accounts = await prisma.account.findMany({
@@ -60,7 +62,169 @@ accountsRoutes.get('/', async (c) => {
     })
   }
 
-  return c.json({ items: accounts, total: accounts.length })
+  // Compute balance per account · sums journal lines
+  const lines = await prisma.journalLine.groupBy({
+    by: ['accountId'],
+    where: { account: { orgId } },
+    _sum: { debit: true, credit: true },
+  })
+  const balanceById = new Map<string, number>()
+  for (const l of lines) {
+    const debit = Number(l._sum.debit || 0)
+    const credit = Number(l._sum.credit || 0)
+    balanceById.set(l.accountId, debit - credit) // raw signed balance
+  }
+  const itemsWithBalance = accounts.map(a => {
+    const raw = balanceById.get(a.id) || 0
+    // For LIABILITY/EQUITY/REVENUE, normal balance is credit · so flip sign
+    const signed = (a.type === 'LIABILITY' || a.type === 'EQUITY' || a.type === 'REVENUE') ? -raw : raw
+    return { ...a, balance: signed }
+  })
+
+  return c.json({ items: itemsWithBalance, total: itemsWithBalance.length })
+})
+
+// GET /accounts/:id/transactions · all journal lines hitting this account
+accountsRoutes.get('/:id/transactions', async (c) => {
+  const orgId = c.get('orgId') as string
+  const id = c.req.param('id')
+  const a = await prisma.account.findFirst({ where: { id, orgId } })
+  if (!a) return c.json({ error: 'not_found' }, 404)
+
+  const lines = await prisma.journalLine.findMany({
+    where: { accountId: id, journal: { orgId } },
+    orderBy: [{ journal: { date: 'desc' } }, { id: 'desc' }],
+    include: { journal: { select: { entryNumber: true, date: true, description: true, source: true, reference: true } } },
+    take: 500,
+  })
+
+  // Running balance (oldest → newest, then reversed for display)
+  const sortedAsc = [...lines].sort((x, y) => x.journal.date.getTime() - y.journal.date.getTime())
+  let running = 0
+  const flip = a.type === 'LIABILITY' || a.type === 'EQUITY' || a.type === 'REVENUE'
+  const withBalance = sortedAsc.map(l => {
+    const debit = Number(l.debit)
+    const credit = Number(l.credit)
+    running += flip ? (credit - debit) : (debit - credit)
+    return {
+      id: l.id,
+      journalNumber: l.journal.entryNumber,
+      date: l.journal.date,
+      description: l.journal.description,
+      lineDescription: l.description,
+      source: l.journal.source,
+      reference: l.journal.reference,
+      debit, credit,
+      runningBalance: running,
+    }
+  }).reverse() // newest first
+
+  return c.json({
+    account: { id: a.id, code: a.code, name: a.name, nameAr: a.nameAr, type: a.type },
+    transactions: withBalance,
+    total: withBalance.length,
+    finalBalance: running,
+  })
+})
+
+// POST /accounts/translate · AI suggests Arabic ↔ English + best account type
+// Input: { input: "جهاز" } or { input: "Sales of laptops" }
+// Output: { name: "Office Equipment", nameAr: "أجهزة مكتبية", type: "ASSET", suggestedCode: "13100", reasoning: "..." }
+const translateSchema = z.object({
+  input: z.string().min(1).max(200),
+  hint: z.string().optional(),
+})
+accountsRoutes.post('/translate', zValidator('json', translateSchema), async (c) => {
+  const orgId = c.get('orgId') as string
+  const { input, hint } = c.req.valid('json')
+
+  // Get current accounts to suggest a non-conflicting code
+  const existing = await prisma.account.findMany({ where: { orgId, isActive: true }, select: { code: true } })
+  const existingCodes = new Set(existing.map(e => e.code))
+
+  // Resolve AI key
+  let resolved
+  try {
+    const { resolveAiKey } = await import('../lib/ai-billing.js')
+    resolved = await resolveAiKey(orgId)
+  } catch {
+    return c.json({ error: 'ai_disabled', message: 'الذكاء غير مفعّل · اكمل يدوياً' }, 503)
+  }
+  if (!resolved.apiKey) return c.json({ error: 'no_key' }, 503)
+
+  const SYSTEM = `You are an accounting assistant. Given a user's free-text input (Arabic OR English),
+suggest a clean accounting account name in BOTH languages and pick the right type.
+
+Output strict JSON only · no markdown · no commentary:
+{
+  "name": "<English name · standard accounting terminology>",
+  "nameAr": "<Arabic name · accounting terminology>",
+  "type": "ASSET" | "LIABILITY" | "EQUITY" | "REVENUE" | "EXPENSE",
+  "category": "<sub-category in Arabic, e.g. 'أصول ثابتة' / 'مصروفات تشغيلية'>",
+  "reasoning": "<one short sentence in Arabic explaining the choice>"
+}
+
+Rules:
+- "جهاز / معدّات / سيارة / مبنى" → ASSET (Fixed Assets)
+- "نقد / صندوق / بنك / إيداع" → ASSET
+- "ذمم مدينة / ذمم على عملاء" → ASSET
+- "مخزون / بضاعة" → ASSET (Inventory)
+- "قرض / دين علينا" → LIABILITY
+- "رأس مال / حصص شركاء" → EQUITY
+- "مبيعات / إيراد / دخل / بيع X" → REVENUE
+- "إيجار / رواتب / كهرباء / إنترنت / مصروف X / شراء خدمة" → EXPENSE
+- Names should follow standard accounting (e.g. "Office Equipment" not "computer thing")
+- Use accounting Arabic (e.g. "أصول ثابتة" not "اشياء مادية")`
+
+  try {
+    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resolved.apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://entix.io',
+        'X-Title': 'Entix Books · Account Translator',
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-haiku-4.5',
+        messages: [
+          { role: 'system', content: SYSTEM },
+          { role: 'user', content: `Input: "${input}"${hint ? `\nContext: ${hint}` : ''}` },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0,
+        max_tokens: 400,
+      }),
+    })
+    if (!r.ok) {
+      const detail = await r.text()
+      return c.json({ error: 'translate_failed', detail: detail.slice(0, 200) }, 502)
+    }
+    const j = await r.json() as any
+    let parsed: any
+    try { parsed = JSON.parse(j.choices?.[0]?.message?.content || '{}') } catch { parsed = {} }
+
+    // Suggest code based on type
+    const TYPE_PREFIX: Record<string, string> = { ASSET: '1', LIABILITY: '2', EQUITY: '3', REVENUE: '4', EXPENSE: '5' }
+    const prefix = TYPE_PREFIX[parsed.type] || '1'
+    let suggested = `${prefix}${(Math.floor(Math.random() * 9000) + 1000)}`
+    // Find next available code starting from prefix0000+1000 step 100
+    for (let n = 1000; n < 9999; n += 100) {
+      const candidate = `${prefix}${n}`
+      if (!existingCodes.has(candidate)) { suggested = candidate; break }
+    }
+
+    return c.json({
+      name: parsed.name || input,
+      nameAr: parsed.nameAr || input,
+      type: parsed.type || 'EXPENSE',
+      category: parsed.category || null,
+      reasoning: parsed.reasoning || null,
+      suggestedCode: suggested,
+    })
+  } catch (e: any) {
+    return c.json({ error: 'exception', message: e?.message || 'unknown' }, 500)
+  }
 })
 
 accountsRoutes.get('/:id', async (c) => {
