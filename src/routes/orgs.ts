@@ -22,11 +22,27 @@ orgsRoutes.get('/', async (c) => {
 const createOrgSchema = z.object({
   slug: z.string().min(2).max(40).regex(/^[a-z0-9-]+$/),
   name: z.string().min(1).max(120),
-  legalName: z.string().optional(),
+  legalName: z.string().optional().nullable(),
   country: z.string().length(2).default('SA'),
   baseCurrency: z.string().length(3).default('SAR'),
-  vatNumber: z.string().optional(),
-  crNumber: z.string().optional(),
+  vatNumber: z.string().optional().nullable(),
+  crNumber: z.string().optional().nullable(),
+  fiscalYearStart: z.number().int().min(1).max(12).optional(),
+  // Branding
+  logoUrl: z.string().optional().nullable(), // accept data: URLs and https URLs
+  stampUrl: z.string().optional().nullable(),
+  // Address
+  addressLine: z.string().optional().nullable(),
+  city: z.string().optional().nullable(),
+  region: z.string().optional().nullable(),
+  postalCode: z.string().optional().nullable(),
+  district: z.string().optional().nullable(),
+  buildingNumber: z.string().optional().nullable(),
+  streetName: z.string().optional().nullable(),
+  industry: z.string().optional().nullable(),
+  taxRegistrationDate: z.string().optional().nullable(),
+  firstVatPeriodStart: z.string().optional().nullable(),
+  vatPeriod: z.enum(['monthly', 'quarterly']).optional().nullable(),
 })
 
 // POST /orgs — create a new org · auto-add creator as OWNER
@@ -34,9 +50,12 @@ orgsRoutes.post('/', zValidator('json', createOrgSchema), async (c) => {
   const auth = c.get('auth')
   const data = c.req.valid('json')
 
+  const { taxRegistrationDate, firstVatPeriodStart, ...rest } = data as any
   const org = await prisma.organization.create({
     data: {
-      ...data,
+      ...rest,
+      taxRegistrationDate: taxRegistrationDate ? new Date(taxRegistrationDate) : null,
+      firstVatPeriodStart: firstVatPeriodStart ? new Date(firstVatPeriodStart) : null,
       memberships: {
         create: { userId: auth.userId, role: 'OWNER' },
       },
@@ -79,8 +98,21 @@ const updateOrgSchema = z.object({
   vatNumber: z.string().optional().nullable(),
   crNumber: z.string().optional().nullable(),
   zatcaEnabled: z.boolean().optional(),
-  logoUrl: z.string().url().optional().nullable(),
+  logoUrl: z.string().optional().nullable(), // accept data: URLs and https URLs
+  stampUrl: z.string().optional().nullable(),
+  addressLine: z.string().optional().nullable(),
+  city: z.string().optional().nullable(),
+  region: z.string().optional().nullable(),
+  postalCode: z.string().optional().nullable(),
+  district: z.string().optional().nullable(),
+  buildingNumber: z.string().optional().nullable(),
+  streetName: z.string().optional().nullable(),
+  industry: z.string().optional().nullable(),
+  taxRegistrationDate: z.string().optional().nullable(),
+  firstVatPeriodStart: z.string().optional().nullable(),
+  vatPeriod: z.enum(['monthly', 'quarterly']).optional().nullable(),
   numberingSettings: z.any().optional(),
+  paymentSettings: z.any().optional(),
 })
 
 const numberingPerKindSchema = z.object({
@@ -105,8 +137,12 @@ orgsRoutes.patch('/:id', zValidator('json', updateOrgSchema), async (c) => {
   })
   if (!m) return c.json({ error: 'not_a_member' }, 403)
   if (m.role !== 'OWNER' && m.role !== 'ADMIN') return c.json({ error: 'forbidden' }, 403)
-  const data = c.req.valid('json')
-  const org = await prisma.organization.update({ where: { id: orgId }, data })
+  const data = c.req.valid('json') as any
+  // Convert ISO date strings to Date for the new fields
+  const patch: any = { ...data }
+  if (data.taxRegistrationDate !== undefined) patch.taxRegistrationDate = data.taxRegistrationDate ? new Date(data.taxRegistrationDate) : null
+  if (data.firstVatPeriodStart !== undefined) patch.firstVatPeriodStart = data.firstVatPeriodStart ? new Date(data.firstVatPeriodStart) : null
+  const org = await prisma.organization.update({ where: { id: orgId }, data: patch })
   return c.json({ ...org, role: m.role })
 })
 

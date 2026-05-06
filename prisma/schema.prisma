@@ -103,7 +103,20 @@ model Organization {
   zatcaMode       String?  @default("sandbox") // sandbox | simulation | production
   zatcaIcv        Int      @default(0) // Invoice Counter Value · auto-increments per invoice
   zatcaPih        String?  @db.Text // Previous Invoice Hash (running chain)
-  logoUrl         String?
+  logoUrl         String?  // Square or wide · base64/URL
+  stampUrl        String?  // Official stamp · used on invoices/contracts
+  /// Org address (used on invoices, ZATCA XML, contracts)
+  addressLine    String?
+  city           String?
+  region         String?
+  postalCode     String?
+  district       String?  // الحي
+  buildingNumber String?  // رقم المبنى
+  streetName     String?  // اسم الشارع
+  industry       String?  // مجال المنشأة
+  taxRegistrationDate DateTime?  // تاريخ التسجيل الضريبي الفعلي
+  firstVatPeriodStart DateTime?  // تاريخ استحقاق أول إقرار ضريبي
+  vatPeriod      String?  // الفترة الضريبية: monthly | quarterly
   /// Numbering preferences · JSON shape:
   /// { contact: { prefix: "CUST-", padding: 4, start: 1, includeYear: false },
   ///   invoice: { prefix: "INV-{YYYY}-", padding: 4, start: 1 },
