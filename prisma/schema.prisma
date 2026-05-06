@@ -434,6 +434,10 @@ model Invoice {
   zatcaQr         String?       @db.Text
   zatcaXml        String?       @db.Text
   zatcaStatus     String?       // CLEARED | REPORTED | REJECTED | PENDING
+  // Payment Link (Stripe / PayPal / Moyasar)
+  paymentLinkUrl      String?
+  paymentLinkProvider String?   // stripe | paypal | moyasar
+  paymentLinkId       String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
