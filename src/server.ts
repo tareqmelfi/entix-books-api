@@ -29,6 +29,8 @@ import { emailRoutes } from './routes/email.js'
 import { loyaltyRoutes } from './routes/loyalty.js'
 import { zatcaRoutes } from './routes/zatca.js'
 import { bankImportRoutes } from './routes/bank-import.js'
+import { currencyRoutes } from './routes/currency.js'
+import { fiscalPeriodsRoutes } from './routes/fiscal-periods.js'
 import { payrollRoutes } from './routes/payroll.js'
 import { inventoryRoutes } from './routes/inventory.js'
 import { agentAdvancedRoutes } from './routes/agent-advanced.js'
@@ -120,6 +122,8 @@ orgScoped.route('/notifications', notificationsRoutes)
 orgScoped.route('/loyalty', loyaltyRoutes)
 orgScoped.route('/zatca', zatcaRoutes)
 orgScoped.route('/bank-import', bankImportRoutes)
+orgScoped.route('/currency', currencyRoutes)
+orgScoped.route('/fiscal-periods', fiscalPeriodsRoutes)
 orgScoped.route('/payroll', payrollRoutes)
 orgScoped.route('/inventory', inventoryRoutes)
 orgScoped.route('/agent', agentAdvancedRoutes)

@@ -128,6 +128,7 @@ model Organization {
   invoices        Invoice[]
   bills           Bill[]
   journals        JournalEntry[]
+  fiscalPeriods   FiscalPeriod[]
   products        Product[]
   taxes           TaxRate[]
   bankAccounts    BankAccount[]
@@ -708,6 +709,46 @@ model JournalAttachment {
   journal JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
 
   @@index([journalId])
+}
+
+// ── Currency rates · daily cached FX from ECB / OpenExchangeRates ─────────
+model CurrencyRate {
+  id          String   @id @default(cuid())
+  orgId       String?  // null = global · org override otherwise
+  fromCurrency String  // SAR, USD, EUR, ...
+  toCurrency  String   // base currency typically
+  rate        Decimal  @db.Decimal(20, 10)
+  date        DateTime // for which day this rate applies
+  source      String   @default("manual") // manual | ecb | oxr | system
+  createdAt   DateTime @default(now())
+
+  @@unique([orgId, fromCurrency, toCurrency, date])
+  @@index([fromCurrency, toCurrency, date])
+}
+
+// ── Fiscal periods · monthly/yearly close + lock ──────────────────────────
+model FiscalPeriod {
+  id            String    @id @default(cuid())
+  orgId         String
+  fiscalYear    Int       // 2026
+  periodNumber  Int       // 1-12 for months, 0 = full year roll-up
+  startDate     DateTime
+  endDate       DateTime
+  status        String    @default("OPEN") // OPEN | LOCKED | CLOSED
+  lockedAt      DateTime?
+  closedAt      DateTime?
+  closedBy      String?   // userId
+  // Roll-forward retained earnings totals snapshot at close
+  retainedEarnings Decimal?  @db.Decimal(20, 4)
+  totalRevenue     Decimal?  @db.Decimal(20, 4)
+  totalExpense     Decimal?  @db.Decimal(20, 4)
+  netIncome        Decimal?  @db.Decimal(20, 4)
+  notes         String?
+
+  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, fiscalYear, periodNumber])
+  @@index([orgId, status])
 }
 
 // ============================================================================
