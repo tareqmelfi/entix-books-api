@@ -922,12 +922,27 @@ model Voucher {
   bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
   project     Project?     @relation(fields: [projectId], references: [id])
   costCenter  CostCenter?  @relation(fields: [costCenterId], references: [id])
+  attachments VoucherAttachment[]
 
   @@unique([orgId, number])
   @@index([orgId, type, date])
   @@index([orgId, bankAccountId])
   @@index([orgId, isAdvance])
   @@index([orgId, contactId])
+}
+
+model VoucherAttachment {
+  id          String   @id @default(cuid())
+  voucherId   String
+  filename    String
+  contentType String
+  sizeBytes   Int
+  url         String   @db.Text
+  createdAt   DateTime @default(now())
+
+  voucher Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@index([voucherId])
 }
 
 enum VoucherType {
