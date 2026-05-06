@@ -17,12 +17,49 @@ const accountSchema = z.object({
 })
 
 // GET /accounts — full chart of accounts (no pagination · usually < 200 rows)
+// Auto-seeds BASE_COA on first read if the org has no accounts (so new orgs aren't empty).
 accountsRoutes.get('/', async (c) => {
   const orgId = c.get('orgId')
-  const accounts = await prisma.account.findMany({
+  let accounts = await prisma.account.findMany({
     where: { orgId, isActive: true },
     orderBy: { code: 'asc' },
   })
+
+  if (accounts.length === 0) {
+    // Seed BASE_COA (no industry add-on) so org has a working chart immediately
+    const seeds: AccountSeed[] = BASE_COA
+    const created: Record<string, string> = {}
+    for (const seed of seeds) {
+      try {
+        const a = await prisma.account.create({
+          data: {
+            orgId,
+            code: seed.code,
+            name: seed.name,
+            nameAr: seed.nameAr,
+            type: seed.type as any,
+            subtype: seed.subtype || null,
+            description: seed.description || null,
+          },
+        })
+        created[seed.code] = a.id
+      } catch { /* ignore unique-violation race */ }
+    }
+    // Wire up parents (best-effort)
+    for (const seed of seeds) {
+      if (!seed.parentCode) continue
+      const childId = created[seed.code]
+      const parentId = created[seed.parentCode]
+      if (childId && parentId) {
+        try { await prisma.account.update({ where: { id: childId }, data: { parentId } }) } catch {}
+      }
+    }
+    accounts = await prisma.account.findMany({
+      where: { orgId, isActive: true },
+      orderBy: { code: 'asc' },
+    })
+  }
+
   return c.json({ items: accounts, total: accounts.length })
 })
 

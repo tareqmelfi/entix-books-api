@@ -29,7 +29,7 @@ const VISION_MODEL = 'anthropic/claude-haiku-4.5'
 
 const extractSchema = z.object({
   /** base64-encoded file contents (for non-image files use plain text) */
-  fileBase64: z.string().min(1).max(20_000_000), // ~15MB
+  fileBase64: z.string().min(1).max(140_000_000), // ~100MB raw · base64 grows by 33%
   fileName: z.string().optional(),
   mimeType: z.string().default('image/jpeg'),
   /** Target schema · what the user wants to populate */
@@ -159,7 +159,19 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
     })
     if (!r.ok) {
       const detail = await r.text()
-      return c.json({ error: 'extraction_failed', detail, status: r.status }, 502)
+      console.error('[extract-document] OpenRouter error', r.status, detail)
+      let userMsg = 'فشل الاستخراج · جرّب ملفاً أوضح'
+      try {
+        const j = JSON.parse(detail)
+        if (j?.error?.message) userMsg = j.error.message
+        if (j?.error?.code === 'insufficient_quota' || /credit|quota|insufficient/i.test(j?.error?.message || '')) {
+          userMsg = 'رصيد OpenRouter منخفض · شحن الرصيد أو استخدم مفتاحاً خاصاً (BYOK)'
+        }
+        if (/model not found/i.test(j?.error?.message || '')) {
+          userMsg = 'النموذج غير متاح حالياً · سيتم التبديل تلقائياً للنموذج البديل'
+        }
+      } catch {}
+      return c.json({ error: 'extraction_failed', detail: userMsg, raw: detail, status: r.status }, 502)
     }
     const json = await r.json() as any
     const content = json.choices?.[0]?.message?.content || '{}'
