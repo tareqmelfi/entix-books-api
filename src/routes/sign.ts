@@ -1,5 +1,5 @@
 /**
- * E-signature integration · DocuSeal at sign.fc.sa
+ * E-signature integration · DocuSeal at sign.ensidex.com
  *
  * POST /api/sign/quotes/:id/send       — create DocuSeal submission for a quote
  * POST /api/sign/invoices/:id/send     — create DocuSeal submission for an invoice
@@ -8,7 +8,7 @@
  * POST /api/sign/webhook               — DocuSeal webhook receiver (no auth)
  *
  * env vars used:
- *   DOCUSEAL_BASE_URL   default: https://sign.fc.sa
+ *   DOCUSEAL_BASE_URL   default: https://sign.ensidex.com
  *   DOCUSEAL_TOKEN      required for create-submission calls
  */
 import { Hono } from 'hono'
@@ -20,7 +20,7 @@ import { createNotification } from './notifications.js'
 
 export const signRoutes = new Hono()
 
-const DOCUSEAL_BASE = process.env.DOCUSEAL_BASE_URL || 'https://sign.fc.sa'
+const DOCUSEAL_BASE = process.env.DOCUSEAL_BASE_URL || 'https://sign.ensidex.com'
 const DOCUSEAL_TOKEN = process.env.DOCUSEAL_TOKEN || ''
 
 // ── Webhook (no auth · public, validated by signing secret) ─────────────────
