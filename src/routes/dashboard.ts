@@ -218,24 +218,32 @@ dashboardRoutes.get('/summary', async (c) => {
     net: m.revenue - m.expenses,
   }))
 
-  // This vs last period (this month vs last month) — combines invoices + expenses + journals
+  // This vs last vs same-month-last-year — combines invoices + expenses + journals (UX-216)
   const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
   const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 1)
-  const [thisMonthRev, thisMonthExp, lastMonthRev, lastMonthExp, journalThis, journalLast] = await Promise.all([
+  const yearAgoStart = new Date(now.getFullYear() - 1, now.getMonth(), 1)
+  const yearAgoEnd = new Date(now.getFullYear() - 1, now.getMonth() + 1, 1)
+  const [thisMonthRev, thisMonthExp, lastMonthRev, lastMonthExp, yearAgoRev, yearAgoExp, journalThis, journalLast, journalYearAgo] = await Promise.all([
     prisma.invoice.aggregate({ where: { orgId, issueDate: { gte: startOfMonth } }, _sum: { total: true } }),
     prisma.expense.aggregate({ where: { orgId, date: { gte: startOfMonth } }, _sum: { total: true } }),
     prisma.invoice.aggregate({ where: { orgId, issueDate: { gte: lastMonthStart, lt: lastMonthEnd } }, _sum: { total: true } }),
     prisma.expense.aggregate({ where: { orgId, date: { gte: lastMonthStart, lt: lastMonthEnd } }, _sum: { total: true } }),
+    prisma.invoice.aggregate({ where: { orgId, issueDate: { gte: yearAgoStart, lt: yearAgoEnd } }, _sum: { total: true } }),
+    prisma.expense.aggregate({ where: { orgId, date: { gte: yearAgoStart, lt: yearAgoEnd } }, _sum: { total: true } }),
     journalTotals(orgId, { gte: startOfMonth }),
     journalTotals(orgId, { gte: lastMonthStart, lt: lastMonthEnd }),
+    journalTotals(orgId, { gte: yearAgoStart, lt: yearAgoEnd }),
   ])
   const thisRev = Number(thisMonthRev._sum.total || 0) + journalThis.revenue
   const thisExp = Number(thisMonthExp._sum.total || 0) + journalThis.expense
   const lastRev = Number(lastMonthRev._sum.total || 0) + journalLast.revenue
   const lastExp = Number(lastMonthExp._sum.total || 0) + journalLast.expense
+  const yaRev = Number(yearAgoRev._sum.total || 0) + journalYearAgo.revenue
+  const yaExp = Number(yearAgoExp._sum.total || 0) + journalYearAgo.expense
   const periodCompare = {
     thisMonth: { revenue: thisRev, expenses: thisExp, net: thisRev - thisExp },
     lastMonth: { revenue: lastRev, expenses: lastExp, net: lastRev - lastExp },
+    yearAgo: { revenue: yaRev, expenses: yaExp, net: yaRev - yaExp },
   }
 
   return c.json({
