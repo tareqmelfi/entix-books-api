@@ -11,6 +11,7 @@ import { prisma } from './db.js'
 import { auth, requireAuth, requireOrg } from './auth.js'
 import { contactsRoutes } from './routes/contacts.js'
 import { orgsRoutes } from './routes/orgs.js'
+import { adminResetRoutes } from './routes/admin-reset.js'
 import { invoicesRoutes } from './routes/invoices.js'
 import { accountsRoutes } from './routes/accounts.js'
 import { meRoutes } from './routes/me.js'
@@ -100,6 +101,7 @@ app.on(['POST', 'GET'], '/api/auth/*', (c) => auth.handler(c.req.raw))
 // ── Auth-only routes ────────────────────────────────────────────────────────
 app.route('/me', meRoutes)
 app.route('/orgs', orgsRoutes)
+app.route('/api/admin', adminResetRoutes)
 
 // Org-scoped routes (require auth + org membership)
 const orgScoped = new Hono()
