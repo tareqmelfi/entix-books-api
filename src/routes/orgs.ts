@@ -429,3 +429,217 @@ orgsRoutes.post('/:id/seed-demo-data', async (c) => {
 
   return c.json({ ok: true, seeded })
 })
+
+
+// ── POST /_/seed-two-demos · creates 2 demo orgs for current user (SA + US) UX-179 ──
+orgsRoutes.post('/_/seed-two-demos', async (c) => {
+  const auth = c.get('auth') as any
+  if (!auth?.userId) return c.json({ error: 'unauthorized' }, 401)
+
+  const seeded: any[] = []
+  const variants = [
+    {
+      slug: `demo-sa-${Math.random().toString(36).slice(2, 6)}`,
+      name: 'شركة الديمو · KSA',
+      legalName: 'KSA Demo Trading Co LLC',
+      country: 'SA',
+      baseCurrency: 'SAR',
+      vatNumber: '300123456700003',
+      crNumber: '1010111222',
+      industry: 'CONSULTING',
+      city: 'الرياض',
+      currency: 'SAR',
+    },
+    {
+      slug: `demo-us-${Math.random().toString(36).slice(2, 6)}`,
+      name: 'Demo Co · USA',
+      legalName: 'US Demo Inc.',
+      country: 'US',
+      baseCurrency: 'USD',
+      vatNumber: '88-1234567',
+      crNumber: '2026-0011223',
+      industry: 'SAAS',
+      city: 'Wilmington, DE',
+      currency: 'USD',
+    },
+  ]
+
+  for (const v of variants) {
+    // Create the org
+    const org = await prisma.organization.create({
+      data: {
+        slug: v.slug,
+        name: v.name,
+        legalName: v.legalName,
+        country: v.country,
+        baseCurrency: v.baseCurrency,
+        fiscalYearStart: 1,
+        fiscalYearEnd: 12,
+        vatNumber: v.vatNumber,
+        crNumber: v.crNumber,
+        industry: v.industry,
+        email: `demo@${v.slug}.entix.io`,
+        phone: v.country === 'SA' ? '+966500000001' : '+13105550100',
+        website: `https://${v.slug}.demo.entix.io`,
+        city: v.city,
+        zatcaEnabled: false,
+        members: { create: { userId: auth.userId, role: 'OWNER' } },
+      },
+    })
+
+    // Seed accounts
+    const ACC = [
+      ['1000','Cash on Hand','الصندوق','ASSET',{cashFlowType:'OPERATING',allowPayment:true}],
+      ['1010', v.country === 'SA' ? 'Al Rajhi · SAR' : 'Mercury · USD', v.country === 'SA' ? 'الراجحي' : 'مرکري دولار', 'ASSET', {cashFlowType:'OPERATING',allowPayment:true}],
+      ['1100','Accounts Receivable','العملاء','ASSET',{cashFlowType:'OPERATING',isSystemAccount:true}],
+      ['1200','Inventory','المخزون','ASSET',{cashFlowType:'OPERATING'}],
+      ['2000','Accounts Payable','الموردون','LIABILITY',{cashFlowType:'OPERATING',isSystemAccount:true}],
+      ['2100', v.country === 'SA' ? 'VAT Payable' : 'Sales Tax Payable', 'ضريبة', 'LIABILITY', {cashFlowType:'OPERATING',isSystemAccount:true}],
+      ['3000','Owner Capital','رأس المال','EQUITY',{cashFlowType:'FINANCING'}],
+      ['4000','Sales Revenue','إيرادات المبيعات','REVENUE',{cashFlowType:'OPERATING'}],
+      ['4100','Services Revenue','إيرادات الخدمات','REVENUE',{cashFlowType:'OPERATING'}],
+      ['5000','Cost of Goods Sold','تكلفة البضاعة','EXPENSE',{cashFlowType:'OPERATING'}],
+      ['6100','Salaries Expense','مصاريف الرواتب','EXPENSE',{cashFlowType:'OPERATING',allowExpenseClaim:true}],
+      ['6200','Rent Expense','مصاريف الإيجار','EXPENSE',{cashFlowType:'OPERATING',allowExpenseClaim:true}],
+      ['6300','Utilities','مصاريف المرافق','EXPENSE',{cashFlowType:'OPERATING'}],
+    ] as Array<[string,string,string,string,any]>
+
+    const accCache: Record<string, any> = {}
+    for (const [code, name, nameAr, type, extra] of ACC) {
+      const a = await prisma.account.create({
+        data: { orgId: org.id, code, name, nameAr, type: type as any, ...extra },
+      })
+      accCache[code] = a
+    }
+
+    // Contacts
+    const customers = v.country === 'SA' ? [
+      { name: 'شركة أكمي السعودية', email: 'ap@acme.sa', taxId: '300123456789003', country: 'SA', kind: 'COMPANY' },
+      { name: 'مؤسسة أحمد التجارية', email: 'finance@ahmad.sa', taxId: '300987654321003', country: 'SA', kind: 'COMPANY' },
+      { name: 'سارة المطيري', email: 'sarah@mail.com', country: 'SA', kind: 'INDIVIDUAL' },
+      { name: 'الهلال للعقارات', email: 'cfo@crescent.sa', taxId: '300555111223003', country: 'SA', kind: 'COMPANY' },
+      { name: 'محمد الغامدي', email: 'm.ghamdi@mail.com', country: 'SA', kind: 'INDIVIDUAL' },
+    ] : [
+      { name: 'Acme Corporation', email: 'ap@acme.com', taxId: '12-3456789', country: 'US', kind: 'COMPANY' },
+      { name: 'TechStart Inc', email: 'billing@techstart.io', taxId: '88-1234567', country: 'US', kind: 'COMPANY' },
+      { name: 'Sarah Johnson', email: 'sarah@mail.com', country: 'US', kind: 'INDIVIDUAL' },
+      { name: 'Crescent Realty LLC', email: 'cfo@crescent.com', taxId: '99-5551112', country: 'US', kind: 'COMPANY' },
+      { name: 'Michael Smith', email: 'msmith@mail.com', country: 'US', kind: 'INDIVIDUAL' },
+    ]
+    const cIds: string[] = []
+    for (let i = 0; i < customers.length; i++) {
+      const c = customers[i]
+      const r = await prisma.contact.create({ data: { orgId: org.id, customCode: `CUST-${String(i+1).padStart(4,'0')}`, type: 'CUSTOMER' as any, isCustomer: true, entityKind: c.kind as any, displayName: c.name, email: c.email, taxId: (c as any).taxId || null, country: c.country }})
+      cIds.push(r.id)
+    }
+
+    const suppliers = v.country === 'SA' ? [
+      { name: 'STC الأعمال', email: 'b2b@stc.com.sa', taxId: '300111222333003', country: 'SA' },
+      { name: 'مكتب التوريدات', email: 'supplies@office.sa', taxId: '300444555666003', country: 'SA' },
+    ] : [
+      { name: 'AWS', email: 'aws-billing@amazon.com', taxId: '91-1646860', country: 'US' },
+      { name: 'Cloudflare Inc', email: 'billing@cloudflare.com', taxId: '27-3441673', country: 'US' },
+    ]
+    const sIds: string[] = []
+    for (let i = 0; i < suppliers.length; i++) {
+      const s = suppliers[i]
+      const r = await prisma.contact.create({ data: { orgId: org.id, customCode: `SUPP-${String(i+1).padStart(4,'0')}`, type: 'SUPPLIER' as any, isSupplier: true, entityKind: 'COMPANY' as any, displayName: s.name, email: s.email, taxId: s.taxId, country: s.country }})
+      sIds.push(r.id)
+    }
+
+    // Products
+    const products = v.country === 'SA' ? [
+      { code: 'CONS-HR', name: 'استشارة بالساعة', sellPrice: '500', kind: 'SERVICE' },
+      { code: 'WEB-DEV', name: 'تطوير موقع', sellPrice: '15000', kind: 'SERVICE' },
+      { code: 'SAAS-MO', name: 'اشتراك شهري', sellPrice: '299', kind: 'SERVICE' },
+      { code: 'CHAIR', name: 'كرسي مكتب', sellPrice: '2500', kind: 'GOOD' },
+    ] : [
+      { code: 'CONS-HR', name: 'Consulting · per hour', sellPrice: '150', kind: 'SERVICE' },
+      { code: 'WEB-DEV', name: 'Web Development', sellPrice: '5000', kind: 'SERVICE' },
+      { code: 'SAAS-MO', name: 'SaaS subscription · monthly', sellPrice: '99', kind: 'SERVICE' },
+      { code: 'CHAIR', name: 'Office Chair', sellPrice: '350', kind: 'GOOD' },
+    ]
+    const pIds: string[] = []
+    const taxRate = v.country === 'SA' ? '0.15' : '0.07'
+    for (const p of products) {
+      const r = await prisma.product.create({ data: { orgId: org.id, code: p.code, name: p.name, sellPrice: p.sellPrice, kind: p.kind as any, isActive: true, taxRate, revenueAccountId: p.kind === 'GOOD' ? accCache['4000']?.id : accCache['4100']?.id, expenseAccountId: accCache['5000']?.id }})
+      pIds.push(r.id)
+    }
+
+    // Invoices · 12 over 90 days
+    const today = new Date()
+    for (let i = 1; i <= 12; i++) {
+      const cId = cIds[i % cIds.length]
+      const pId = pIds[i % pIds.length]
+      const product = await prisma.product.findUnique({ where: { id: pId } })
+      if (!product) continue
+      const qty = 1 + Math.floor(Math.random() * 4)
+      const unit = Number(product.sellPrice)
+      const subtotal = qty * unit
+      const taxAmount = subtotal * Number(taxRate)
+      const total = subtotal + taxAmount
+      const issueDate = new Date(today.getTime() - i * 6 * 86400000)
+      const r = Math.random()
+      const status = i <= 2 ? 'DRAFT' : r < 0.5 ? 'PAID' : i % 5 === 0 ? 'OVERDUE' : 'APPROVED'
+      await prisma.invoice.create({
+        data: {
+          orgId: org.id, contactId: cId,
+          invoiceNumber: `INV-${String(i).padStart(4,'0')}`,
+          issueDate, dueDate: new Date(issueDate.getTime() + 30 * 86400000),
+          currency: v.currency,
+          subtotal: subtotal.toFixed(2), taxAmount: taxAmount.toFixed(2),
+          total: total.toFixed(2),
+          amountPaid: status === 'PAID' ? total.toFixed(2) : '0',
+          status,
+          lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: product.sellPrice, taxRate, taxInclusive: false, productId: product.id, total: subtotal.toFixed(2) }] }
+        }
+      })
+    }
+
+    // Bills
+    for (let i = 1; i <= 8; i++) {
+      const sId = sIds[i % sIds.length]
+      const subtotal = 200 + Math.floor(Math.random() * 3000)
+      const taxAmount = subtotal * Number(taxRate)
+      const total = subtotal + taxAmount
+      const issueDate = new Date(today.getTime() - i * 8 * 86400000)
+      await prisma.bill.create({
+        data: {
+          orgId: org.id, contactId: sId,
+          billNumber: `BILL-${String(i).padStart(4,'0')}`,
+          issueDate, dueDate: new Date(issueDate.getTime() + 30 * 86400000),
+          currency: v.currency,
+          subtotal: subtotal.toFixed(2), taxAmount: taxAmount.toFixed(2),
+          total: total.toFixed(2),
+          amountPaid: i % 3 === 0 ? total.toFixed(2) : '0',
+          status: i % 3 === 0 ? 'PAID' : 'RECEIVED',
+          lines: { create: [{ description: i % 2 === 0 ? (v.country === 'SA' ? 'إيجار مكتب' : 'Office rent') : (v.country === 'SA' ? 'استضافة سحابية' : 'Cloud hosting'), quantity: '1', unitPrice: subtotal.toFixed(2), taxRate, taxInclusive: false, total: subtotal.toFixed(2) }] }
+        }
+      })
+    }
+
+    // Expenses
+    const cats = v.country === 'SA' ? ['إيجار مكتب', 'رواتب', 'مرافق', 'تسويق', 'سفر'] : ['Office Rent', 'Salaries', 'Utilities', 'Marketing', 'Travel']
+    for (let i = 1; i <= 12; i++) {
+      const amount = 100 + Math.floor(Math.random() * 4000)
+      await prisma.expense.create({
+        data: {
+          orgId: org.id,
+          number: `EXP-${String(i).padStart(4,'0')}`,
+          date: new Date(today.getTime() - i * 4 * 86400000),
+          category: cats[i % cats.length],
+          currency: v.currency,
+          subtotal: amount.toFixed(2),
+          taxAmount: (amount * Number(taxRate)).toFixed(2),
+          total: (amount * (1 + Number(taxRate))).toFixed(2),
+          paymentMethod: ['CASH', 'BANK_TRANSFER', 'CARD'][i % 3] as any,
+          description: `${cats[i % cats.length]} · شهر ${(today.getMonth() % 12) + 1}`,
+        }
+      })
+    }
+
+    seeded.push({ id: org.id, slug: org.slug, name: org.name, country: org.country, currency: org.baseCurrency })
+  }
+
+  return c.json({ ok: true, seeded, total: seeded.length })
+})
