@@ -164,7 +164,7 @@ app.onError((err, c) => {
   return c.json(
     {
       error: 'internal_error',
-      detail: process.env.NODE_ENV === 'production' ? undefined : err.message,
+      detail: err.message, // exposed temporarily for debugging UX-184
     },
     500,
   )
