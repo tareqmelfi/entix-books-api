@@ -72,8 +72,13 @@ async function nextBillNumber(orgId: string): Promise<string> {
 billsRoutes.get('/', async (c) => {
   const orgId = c.get('orgId')
   const status = c.req.query('status')
+  const contactId = c.req.query('contactId')
   const where: any = { orgId }
-  if (status) where.status = status
+  if (status) {
+    const arr = status.split(',').map(s => s.trim()).filter(Boolean)
+    where.status = arr.length === 1 ? arr[0] : { in: arr }
+  }
+  if (contactId) where.contactId = contactId
   const items = await prisma.bill.findMany({
     where,
     include: { contact: { select: { id: true, displayName: true } }, _count: { select: { lines: true, payments: true } } },
