@@ -31,6 +31,7 @@ const createOrgSchema = z.object({
   fiscalYearEnd: z.number().int().min(1).max(12).optional(),
   // Branding
   logoUrl: z.string().optional().nullable(),
+  printLogoUrl: z.string().optional().nullable(),
   stampUrl: z.string().optional().nullable(),
   // Contact
   email: z.string().optional().nullable(),

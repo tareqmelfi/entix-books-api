@@ -103,7 +103,8 @@ model Organization {
   zatcaMode       String?  @default("sandbox") // sandbox | simulation | production
   zatcaIcv        Int      @default(0) // Invoice Counter Value · auto-increments per invoice
   zatcaPih        String?  @db.Text // Previous Invoice Hash (running chain)
-  logoUrl         String?  // Square or wide · base64/URL
+  logoUrl         String?  // Square or wide · base64/URL · used as avatar
+  printLogoUrl    String?  // Optional · separate logo for invoices/contracts (higher-res preferred)
   stampUrl        String?  // Official stamp · used on invoices/contracts
   /// Org address (used on invoices, ZATCA XML, contracts)
   addressLine    String?
