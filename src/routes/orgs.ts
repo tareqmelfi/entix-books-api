@@ -304,3 +304,128 @@ async function seedDefaultAccounts(orgId: string) {
     data: accounts.map((a) => ({ ...a, orgId })),
   })
 }
+
+
+// ── POST /:id/seed-demo-data · fill an existing org with demo dataset (UX-173) ──
+orgsRoutes.post('/:id/seed-demo-data', async (c) => {
+  const auth = c.get('auth') as any
+  if (!auth?.userId) return c.json({ error: 'unauthorized' }, 401)
+  const orgId = c.req.param('id')
+  const member = await prisma.orgMembership.findUnique({
+    where: { userId_orgId: { userId: auth.userId, orgId } },
+  })
+  if (!member) return c.json({ error: 'forbidden' }, 403)
+
+  const today = new Date()
+  let seeded = { accounts: 0, contacts: 0, products: 0, invoices: 0, bills: 0, expenses: 0, vouchers: 0, journals: 0 }
+
+  // ── Accounts ─────────────────────────────────────────────────────────────
+  const ACC = [
+    ['1000','Cash on Hand','الصندوق','ASSET',{cashFlowType:'OPERATING',allowPayment:true}],
+    ['1010','Mercury USD','مرکري دولار','ASSET',{cashFlowType:'OPERATING',allowPayment:true}],
+    ['1100','Accounts Receivable','العملاء','ASSET',{cashFlowType:'OPERATING',isSystemAccount:true}],
+    ['1200','Inventory','المخزون','ASSET',{cashFlowType:'OPERATING'}],
+    ['2000','Accounts Payable','الموردون','LIABILITY',{cashFlowType:'OPERATING',isSystemAccount:true}],
+    ['2100','VAT Payable','ضريبة القيمة المضافة','LIABILITY',{cashFlowType:'OPERATING',isSystemAccount:true}],
+    ['3000','Owner Capital','رأس المال','EQUITY',{cashFlowType:'FINANCING'}],
+    ['4000','Sales Revenue','إيرادات المبيعات','REVENUE',{cashFlowType:'OPERATING'}],
+    ['4100','Services Revenue','إيرادات الخدمات','REVENUE',{cashFlowType:'OPERATING'}],
+    ['5000','Cost of Goods Sold','تكلفة البضاعة','EXPENSE',{cashFlowType:'OPERATING'}],
+    ['6100','Salaries Expense','مصاريف الرواتب','EXPENSE',{cashFlowType:'OPERATING',allowExpenseClaim:true}],
+    ['6200','Rent Expense','مصاريف الإيجار','EXPENSE',{cashFlowType:'OPERATING',allowExpenseClaim:true}],
+  ] as Array<[string,string,string,string,any]>
+
+  const accCache: Record<string, any> = {}
+  for (const [code, name, nameAr, type, extra] of ACC) {
+    const existing = await prisma.account.findFirst({ where: { orgId, code } })
+    if (existing) { accCache[code] = existing; continue }
+    const created = await prisma.account.create({
+      data: { orgId, code, name, nameAr, type: type as any, ...extra },
+    })
+    accCache[code] = created
+    seeded.accounts++
+  }
+
+  // ── Contacts ─────────────────────────────────────────────────────────────
+  const customers = [
+    { displayName: 'Acme Corporation', email: 'ap@acme.com', phone: '+966112345678', taxId: '300123456789003', country: 'SA', city: 'Riyadh', kind: 'COMPANY' },
+    { displayName: 'Ahmad Trading Co', email: 'finance@ahmad.sa', phone: '+966551234567', taxId: '300987654321003', country: 'SA', city: 'Jeddah', kind: 'COMPANY' },
+    { displayName: 'Sarah AlMutairi', email: 'sarah@gmail.com', phone: '+966505555555', country: 'SA', kind: 'INDIVIDUAL' },
+    { displayName: 'TechStart Inc', email: 'billing@techstart.io', taxId: '88-1234567', country: 'US', city: 'San Francisco', kind: 'COMPANY' },
+    { displayName: 'Crescent Real Estate', email: 'cfo@crescent.sa', phone: '+966114567890', taxId: '300555111223003', country: 'SA', kind: 'COMPANY' },
+  ]
+  const suppliers = [
+    { displayName: 'Cloudflare Inc', email: 'billing@cloudflare.com', taxId: '27-3441673', country: 'US', kind: 'COMPANY' },
+    { displayName: 'STC Business', email: 'b2b@stc.com.sa', phone: '+966114000000', taxId: '300111222333003', country: 'SA', kind: 'COMPANY' },
+    { displayName: 'AWS', email: 'aws-billing@amazon.com', taxId: '91-1646860', country: 'US', kind: 'COMPANY' },
+  ]
+
+  const cIds: string[] = []
+  for (let i = 0; i < customers.length; i++) {
+    const c = customers[i]
+    const code = `CUST-${String(i + 1).padStart(4,'0')}`
+    const existing = await prisma.contact.findFirst({ where: { orgId, customCode: code } })
+    if (existing) { cIds.push(existing.id); continue }
+    const r = await prisma.contact.create({ data: { orgId, customCode: code, type: 'CUSTOMER' as any, isCustomer: true, entityKind: c.kind as any, displayName: c.displayName, email: c.email, phone: c.phone || null, taxId: c.taxId || null, country: c.country, city: c.city || null }})
+    cIds.push(r.id); seeded.contacts++
+  }
+  const sIds: string[] = []
+  for (let i = 0; i < suppliers.length; i++) {
+    const s = suppliers[i]
+    const code = `SUPP-${String(i + 1).padStart(4,'0')}`
+    const existing = await prisma.contact.findFirst({ where: { orgId, customCode: code } })
+    if (existing) { sIds.push(existing.id); continue }
+    const r = await prisma.contact.create({ data: { orgId, customCode: code, type: 'SUPPLIER' as any, isSupplier: true, entityKind: s.kind as any, displayName: s.displayName, email: s.email, phone: s.phone || null, taxId: s.taxId || null, country: s.country }})
+    sIds.push(r.id); seeded.contacts++
+  }
+
+  // ── Products ─────────────────────────────────────────────────────────────
+  const products = [
+    { code: 'CONS-HR', name: 'Consulting · Per Hour', sellPrice: '500', kind: 'SERVICE' },
+    { code: 'WEB-DEV', name: 'Website Development', sellPrice: '15000', kind: 'SERVICE' },
+    { code: 'SAAS-MO', name: 'SaaS Subscription · Monthly', sellPrice: '299', kind: 'SERVICE' },
+    { code: 'LAPTOP-PRO', name: 'MacBook Pro 16"', sellPrice: '13500', kind: 'GOOD' },
+    { code: 'CHAIR-ERG', name: 'Ergonomic Chair', sellPrice: '2500', kind: 'GOOD' },
+  ]
+  const pIds: string[] = []
+  for (const p of products) {
+    const existing = await prisma.product.findFirst({ where: { orgId, code: p.code } })
+    if (existing) { pIds.push(existing.id); continue }
+    const r = await prisma.product.create({ data: { orgId, code: p.code, name: p.name, sellPrice: p.sellPrice, kind: p.kind as any, isActive: true, taxRate: '0.15', revenueAccountId: p.kind === 'GOOD' ? accCache['4000']?.id : accCache['4100']?.id, expenseAccountId: accCache['5000']?.id }})
+    pIds.push(r.id); seeded.products++
+  }
+
+  // ── Invoices ─────────────────────────────────────────────────────────────
+  for (let i = 1; i <= 10; i++) {
+    const number = `DEMO-INV-${String(i).padStart(4,'0')}`
+    const existing = await prisma.invoice.findFirst({ where: { orgId, invoiceNumber: number } })
+    if (existing) continue
+    const customerId = cIds[i % cIds.length]
+    const productId = pIds[i % pIds.length]
+    const product = await prisma.product.findUnique({ where: { id: productId } })
+    if (!product) continue
+    const qty = 1 + Math.floor(Math.random() * 3)
+    const unit = Number(product.sellPrice)
+    const subtotal = qty * unit
+    const taxAmount = subtotal * 0.15
+    const total = subtotal + taxAmount
+    const issueDate = new Date(today.getTime() - i * 5 * 86400000)
+    const r = Math.random()
+    const status = i <= 2 ? 'DRAFT' : r < 0.5 ? 'PAID' : 'APPROVED'
+    await prisma.invoice.create({ data: { orgId, contactId: customerId, invoiceNumber: number, issueDate, dueDate: new Date(issueDate.getTime() + 30 * 86400000), currency: 'SAR', subtotal: subtotal.toFixed(2), taxAmount: taxAmount.toFixed(2), total: total.toFixed(2), amountPaid: status === 'PAID' ? total.toFixed(2) : '0', status, lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: product.sellPrice, taxRate: '0.15', taxInclusive: false, productId: product.id, total: subtotal.toFixed(2) }] } } })
+    seeded.invoices++
+  }
+
+  // ── Expenses ────────────────────────────────────────────────────────────
+  const cats = ['Office Rent', 'Salaries', 'Utilities', 'Travel', 'Software']
+  for (let i = 1; i <= 10; i++) {
+    const number = `DEMO-EXP-${String(i).padStart(4,'0')}`
+    const existing = await prisma.expense.findFirst({ where: { orgId, number } })
+    if (existing) continue
+    const amount = 200 + Math.floor(Math.random() * 3000)
+    await prisma.expense.create({ data: { orgId, number, date: new Date(today.getTime() - i * 3 * 86400000), category: cats[i % cats.length], currency: 'SAR', subtotal: amount.toFixed(2), taxAmount: (amount * 0.15).toFixed(2), total: (amount * 1.15).toFixed(2), paymentMethod: 'CASH' as any, description: `${cats[i % cats.length]} expense` } })
+    seeded.expenses++
+  }
+
+  return c.json({ ok: true, seeded })
+})
