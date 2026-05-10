@@ -88,7 +88,10 @@ invoicesRoutes.get('/', async (c) => {
   const limit = Math.min(Number(c.req.query('limit') || '50'), 200)
 
   const where: any = { orgId }
-  if (status) where.status = status
+  if (status) {
+    const arr = status.split(',').map(s => s.trim()).filter(Boolean)
+    where.status = arr.length === 1 ? arr[0] : { in: arr }
+  }
   if (contactId) where.contactId = contactId
 
   const [items, total] = await Promise.all([
