@@ -367,7 +367,7 @@ orgsRoutes.post('/:id/seed-demo-data', async (c) => {
     if (!b.accountId) continue
     const existing = await prisma.bankAccount.findFirst({ where: { orgId, name: b.name } })
     if (existing) continue
-    await prisma.bankAccount.create({ data: { orgId, name: b.name, currency: b.currency, openingBalance: b.balance, accountId: b.accountId } })
+    await prisma.bankAccount.create({ data: { orgId, name: b.name, currency: b.currency, balance: b.balance, accountId: b.accountId } })
     seeded.banks++
   }
 
@@ -436,9 +436,9 @@ orgsRoutes.post('/:id/seed-demo-data', async (c) => {
   ]
   const pIds: string[] = []
   for (const p of products) {
-    const existing = await prisma.product.findFirst({ where: { orgId, code: p.code } })
+    const existing = await prisma.product.findFirst({ where: { orgId, sku: p.code } })
     if (existing) { pIds.push(existing.id); continue }
-    const r = await prisma.product.create({ data: { orgId, code: p.code, name: p.name, sellPrice: p.sellPrice, kind: p.kind as any, isActive: true, taxRate: '0.15', revenueAccountId: p.kind === 'GOOD' ? accCache['4000']?.id : accCache['4100']?.id, expenseAccountId: accCache['5000']?.id }})
+    const r = await prisma.product.create({ data: { orgId, sku: p.code, name: p.name, unitPrice: p.sellPrice, type: p.kind as any, isActive: true, incomeAccountId: p.kind === 'GOOD' ? accCache['4000']?.id : accCache['4100']?.id, expenseAccountId: accCache['5000']?.id }})
     pIds.push(r.id); seeded.products++
   }
 
@@ -452,7 +452,7 @@ orgsRoutes.post('/:id/seed-demo-data', async (c) => {
     const product = await prisma.product.findUnique({ where: { id: productId } })
     if (!product) continue
     const qty = 1 + Math.floor(Math.random() * 5)
-    const unit = Number(product.sellPrice)
+    const unit = Number(product.unitPrice)
     const subtotal = qty * unit
     const taxAmount = subtotal * 0.15
     const total = subtotal + taxAmount
@@ -462,10 +462,10 @@ orgsRoutes.post('/:id/seed-demo-data', async (c) => {
     let status: string
     if (i <= 3) status = 'DRAFT'
     else if (r < 0.55) status = 'PAID'
-    else if (r < 0.80) status = 'APPROVED'
-    else if (r < 0.92) status = 'SENT'
-    else status = daysAgo > 30 ? 'OVERDUE' : 'APPROVED'
-    await prisma.invoice.create({ data: { orgId, contactId: customerId, invoiceNumber: number, issueDate, dueDate: new Date(issueDate.getTime() + 30 * 86400000), currency: 'SAR', subtotal: subtotal.toFixed(2), taxAmount: taxAmount.toFixed(2), total: total.toFixed(2), amountPaid: status === 'PAID' ? total.toFixed(2) : '0', status: status as any, lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: product.sellPrice, taxRate: '0.15', taxInclusive: false, productId: product.id, total: subtotal.toFixed(2) }] } } })
+    else if (r < 0.80) status = 'SENT'
+    else if (r < 0.92) status = 'PARTIAL'
+    else status = daysAgo > 30 ? 'OVERDUE' : 'SENT'
+    await prisma.invoice.create({ data: { orgId, contactId: customerId, invoiceNumber: number, issueDate, dueDate: new Date(issueDate.getTime() + 30 * 86400000), currency: 'SAR', subtotal: subtotal.toFixed(2), taxAmount: taxAmount.toFixed(2), total: total.toFixed(2), amountPaid: status === 'PAID' ? total.toFixed(2) : '0', status: status as any, lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: product.unitPrice, taxRate: '0.15', taxInclusive: false, productId: product.id, total: subtotal.toFixed(2) }] } } })
     seeded.invoices++
   }
 
@@ -488,7 +488,7 @@ orgsRoutes.post('/:id/seed-demo-data', async (c) => {
     const cat = cats[i % cats.length]
     const amount = cat.amt()
     const daysAgo = Math.floor(Math.random() * 180)
-    await prisma.expense.create({ data: { orgId, number, date: new Date(today.getTime() - daysAgo * 86400000), category: cat.name, currency: 'SAR', subtotal: amount.toFixed(2), taxAmount: (amount * 0.15).toFixed(2), total: (amount * 1.15).toFixed(2), paymentMethod: 'BANK' as any, description: cat.name } })
+    await prisma.expense.create({ data: { orgId, number, date: new Date(today.getTime() - daysAgo * 86400000), category: cat.name, currency: 'SAR', subtotal: amount.toFixed(2), taxAmount: (amount * 0.15).toFixed(2), total: (amount * 1.15).toFixed(2), paymentMethod: 'BANK_TRANSFER' as any, description: cat.name } })
     seeded.expenses++
   }
 
@@ -635,7 +635,7 @@ orgsRoutes.post('/_/seed-two-demos', async (c) => {
     const pIds: string[] = []
     const taxRate = v.country === 'SA' ? '0.15' : '0.07'
     for (const p of products) {
-      const r = await prisma.product.create({ data: { orgId: org.id, code: p.code, name: p.name, sellPrice: p.sellPrice, kind: p.kind as any, isActive: true, taxRate, revenueAccountId: p.kind === 'GOOD' ? accCache['4000']?.id : accCache['4100']?.id, expenseAccountId: accCache['5000']?.id }})
+      const r = await prisma.product.create({ data: { orgId: org.id, sku: p.code, name: p.name, unitPrice: p.sellPrice, type: p.kind as any, isActive: true, incomeAccountId: p.kind === 'GOOD' ? accCache['4000']?.id : accCache['4100']?.id, expenseAccountId: accCache['5000']?.id }})
       pIds.push(r.id)
     }
 
@@ -647,13 +647,13 @@ orgsRoutes.post('/_/seed-two-demos', async (c) => {
       const product = await prisma.product.findUnique({ where: { id: pId } })
       if (!product) continue
       const qty = 1 + Math.floor(Math.random() * 4)
-      const unit = Number(product.sellPrice)
+      const unit = Number(product.unitPrice)
       const subtotal = qty * unit
       const taxAmount = subtotal * Number(taxRate)
       const total = subtotal + taxAmount
       const issueDate = new Date(today.getTime() - i * 6 * 86400000)
       const r = Math.random()
-      const status = i <= 2 ? 'DRAFT' : r < 0.5 ? 'PAID' : i % 5 === 0 ? 'OVERDUE' : 'APPROVED'
+      const status = i <= 2 ? 'DRAFT' : r < 0.5 ? 'PAID' : i % 5 === 0 ? 'OVERDUE' : 'SENT'
       await prisma.invoice.create({
         data: {
           orgId: org.id, contactId: cId,
@@ -664,7 +664,7 @@ orgsRoutes.post('/_/seed-two-demos', async (c) => {
           total: total.toFixed(2),
           amountPaid: status === 'PAID' ? total.toFixed(2) : '0',
           status,
-          lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: product.sellPrice, taxRate, taxInclusive: false, productId: product.id, total: subtotal.toFixed(2) }] }
+          lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: product.unitPrice, taxRate, taxInclusive: false, productId: product.id, total: subtotal.toFixed(2) }] }
         }
       })
     }
