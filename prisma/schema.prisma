@@ -105,6 +105,7 @@ model Organization {
   zatcaPih        String?  @db.Text // Previous Invoice Hash (running chain)
   logoUrl         String?  // Square or wide · base64/URL · used as avatar
   printLogoUrl    String?  // Optional · separate logo for invoices/contracts (higher-res preferred)
+  defaultInvoiceLanguage String? @default("ar") // "ar" | "en" · default print language for invoices/vouchers/reports
   stampUrl        String?  // Official stamp · used on invoices/contracts
   /// Org address (used on invoices, ZATCA XML, contracts)
   addressLine    String?

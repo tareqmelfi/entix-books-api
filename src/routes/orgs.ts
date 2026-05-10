@@ -32,6 +32,7 @@ const createOrgSchema = z.object({
   // Branding
   logoUrl: z.string().optional().nullable(),
   printLogoUrl: z.string().optional().nullable(),
+  defaultInvoiceLanguage: z.enum(["ar", "en"]).optional(),
   stampUrl: z.string().optional().nullable(),
   // Contact
   email: z.string().optional().nullable(),
