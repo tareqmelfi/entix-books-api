@@ -465,7 +465,7 @@ orgsRoutes.post('/:id/seed-demo-data', async (c) => {
     else if (r < 0.80) status = 'SENT'
     else if (r < 0.92) status = 'PARTIAL'
     else status = daysAgo > 30 ? 'OVERDUE' : 'SENT'
-    await prisma.invoice.create({ data: { orgId, contactId: customerId, invoiceNumber: number, issueDate, dueDate: new Date(issueDate.getTime() + 30 * 86400000), currency: 'SAR', subtotal: subtotal.toFixed(2), taxAmount: taxAmount.toFixed(2), total: total.toFixed(2), amountPaid: status === 'PAID' ? total.toFixed(2) : '0', status: status as any, lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: product.unitPrice, taxRate: '0.15', taxInclusive: false, productId: product.id, total: subtotal.toFixed(2) }] } } })
+    await prisma.invoice.create({ data: { orgId, contactId: customerId, invoiceNumber: number, issueDate, dueDate: new Date(issueDate.getTime() + 30 * 86400000), currency: 'SAR', subtotal: subtotal.toFixed(2), taxTotal: taxAmount.toFixed(2), total: total.toFixed(2), amountPaid: status === 'PAID' ? total.toFixed(2) : '0', status: status as any, lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: String(product.unitPrice), productId: product.id, subtotal: subtotal.toFixed(2) }] } } })
     seeded.invoices++
   }
 
@@ -488,7 +488,7 @@ orgsRoutes.post('/:id/seed-demo-data', async (c) => {
     const cat = cats[i % cats.length]
     const amount = cat.amt()
     const daysAgo = Math.floor(Math.random() * 180)
-    await prisma.expense.create({ data: { orgId, number, date: new Date(today.getTime() - daysAgo * 86400000), category: cat.name, currency: 'SAR', subtotal: amount.toFixed(2), taxAmount: (amount * 0.15).toFixed(2), total: (amount * 1.15).toFixed(2), paymentMethod: 'BANK_TRANSFER' as any, description: cat.name } })
+    await prisma.expense.create({ data: { orgId, number, date: new Date(today.getTime() - daysAgo * 86400000), category: cat.name, currency: 'SAR', amount: amount.toFixed(2), taxAmount: (amount * 0.15).toFixed(2), total: (amount * 1.15).toFixed(2), paymentMethod: 'BANK_TRANSFER' as any, description: cat.name } })
     seeded.expenses++
   }
 
@@ -660,11 +660,11 @@ orgsRoutes.post('/_/seed-two-demos', async (c) => {
           invoiceNumber: `INV-${String(i).padStart(4,'0')}`,
           issueDate, dueDate: new Date(issueDate.getTime() + 30 * 86400000),
           currency: v.currency,
-          subtotal: subtotal.toFixed(2), taxAmount: taxAmount.toFixed(2),
+          subtotal: subtotal.toFixed(2), taxTotal: taxAmount.toFixed(2),
           total: total.toFixed(2),
           amountPaid: status === 'PAID' ? total.toFixed(2) : '0',
-          status,
-          lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: product.unitPrice, taxRate, taxInclusive: false, productId: product.id, total: subtotal.toFixed(2) }] }
+          status: status as any,
+          lines: { create: [{ description: product.name, quantity: String(qty), unitPrice: String(product.unitPrice), productId: product.id, subtotal: subtotal.toFixed(2) }] }
         }
       })
     }
@@ -682,11 +682,11 @@ orgsRoutes.post('/_/seed-two-demos', async (c) => {
           billNumber: `BILL-${String(i).padStart(4,'0')}`,
           issueDate, dueDate: new Date(issueDate.getTime() + 30 * 86400000),
           currency: v.currency,
-          subtotal: subtotal.toFixed(2), taxAmount: taxAmount.toFixed(2),
+          subtotal: subtotal.toFixed(2), taxTotal: taxAmount.toFixed(2),
           total: total.toFixed(2),
           amountPaid: i % 3 === 0 ? total.toFixed(2) : '0',
-          status: i % 3 === 0 ? 'PAID' : 'RECEIVED',
-          lines: { create: [{ description: i % 2 === 0 ? (v.country === 'SA' ? 'إيجار مكتب' : 'Office rent') : (v.country === 'SA' ? 'استضافة سحابية' : 'Cloud hosting'), quantity: '1', unitPrice: subtotal.toFixed(2), taxRate, taxInclusive: false, total: subtotal.toFixed(2) }] }
+          status: (i % 3 === 0 ? 'PAID' : 'RECEIVED') as any,
+          lines: { create: [{ description: i % 2 === 0 ? (v.country === 'SA' ? 'إيجار مكتب' : 'Office rent') : (v.country === 'SA' ? 'استضافة سحابية' : 'Cloud hosting'), quantity: '1', unitPrice: subtotal.toFixed(2), subtotal: subtotal.toFixed(2) }] }
         }
       })
     }
@@ -702,7 +702,7 @@ orgsRoutes.post('/_/seed-two-demos', async (c) => {
           date: new Date(today.getTime() - i * 4 * 86400000),
           category: cats[i % cats.length],
           currency: v.currency,
-          subtotal: amount.toFixed(2),
+          amount: amount.toFixed(2),
           taxAmount: (amount * Number(taxRate)).toFixed(2),
           total: (amount * (1 + Number(taxRate))).toFixed(2),
           paymentMethod: ['CASH', 'BANK_TRANSFER', 'CARD'][i % 3] as any,
