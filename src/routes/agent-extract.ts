@@ -33,6 +33,36 @@ const VISION_MODELS = [
 ]
 const VISION_MODEL = VISION_MODELS[0]
 
+// PaddleOCR fallback service · self-hosted on same VPS (UX-161)
+const PADDLE_OCR_URL = process.env.PADDLE_OCR_URL || ''
+const PADDLE_OCR_TOKEN = process.env.PADDLE_OCR_TOKEN || ''
+
+/** Try PaddleOCR · returns raw text or null if unavailable/failed */
+async function paddleOcrFallback(fileBase64: string, mimeType: string): Promise<string | null> {
+  if (!PADDLE_OCR_URL) return null
+  // PaddleOCR doesn't handle PDFs natively · only images
+  if (!mimeType.startsWith('image/')) return null
+  try {
+    const r = await fetch(`${PADDLE_OCR_URL}/ocr/json`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(PADDLE_OCR_TOKEN ? { Authorization: `Bearer ${PADDLE_OCR_TOKEN}` } : {}),
+      },
+      body: JSON.stringify({ fileBase64, lang: 'ar' }),
+    })
+    if (!r.ok) {
+      console.warn('[paddle-ocr] failed', r.status)
+      return null
+    }
+    const j = (await r.json()) as { full_text?: string }
+    return j.full_text || null
+  } catch (e) {
+    console.warn('[paddle-ocr] exception', e)
+    return null
+  }
+}
+
 const extractSchema = z.object({
   /** base64-encoded file contents (for non-image files use plain text) */
   fileBase64: z.string().min(1).max(140_000_000), // ~100MB raw · base64 grows by 33%
@@ -198,7 +228,27 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
   try {
     if (!r || !r.ok) {
       const detail = lastDetail
-      console.error('[extract-document] all models failed', detail)
+      console.error('[extract-document] all Claude vision models failed', detail)
+
+      // Fallback to PaddleOCR · returns raw text only · we wrap in a minimal envelope
+      const paddleText = await paddleOcrFallback(fileBase64, mimeType)
+      if (paddleText) {
+        await logAiUsage({
+          orgId, userId: auth?.userId,
+          endpoint: '/api/agent/extract-document', model: 'paddle-ocr-fallback',
+          source: 'fallback', provider: 'paddle',
+          promptTokens: 0, completionTokens: 0, costUsd: 0, successful: true,
+        })
+        return c.json({
+          kind: 'unknown',
+          confidence: 0.5,
+          warnings: ['تم استخدام PaddleOCR fallback · النص الخام فقط · يجب المراجعة'],
+          rawText: paddleText,
+          lines: [],
+          totals: { subtotal: 0, discount: 0, tax: 0, total: 0 },
+          _meta: { model: 'paddle-ocr-fallback', source: 'fallback', target },
+        })
+      }
       let userMsg = 'فشل الاستخراج · جرّب ملفاً أوضح'
       try {
         const j = JSON.parse(detail)
