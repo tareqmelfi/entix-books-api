@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { requireAuth } from '../auth.js'
 import { prisma } from '../db.js'
+import { resetCompanyData, seedCompanyDefaults } from '../lib/company-reset.js'
 
 export const orgsRoutes = new Hono()
 
@@ -223,6 +224,119 @@ orgsRoutes.delete('/:id/members/:memberId', async (c) => {
   if (target.userId === auth.userId) return c.json({ error: 'cannot_remove_self' }, 400)
   await prisma.orgMembership.delete({ where: { id: memberId } })
   return c.body(null, 204)
+})
+
+// POST /orgs/:id/reset-data — safe company reset, keeps user/session/org shell
+const resetDataSchema = z.object({
+  mode: z.enum(['blank', 'demo', 'clean_company']).default('blank'),
+  confirmName: z.string().min(1),
+})
+
+orgsRoutes.post('/:id/reset-data', zValidator('json', resetDataSchema), async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const { mode, confirmName } = c.req.valid('json')
+
+  const membership = await prisma.orgMembership.findUnique({
+    where: { userId_orgId: { userId: auth.userId, orgId } },
+    include: { org: true },
+  })
+  if (!membership) return c.json({ error: 'not_a_member' }, 403)
+  if (membership.role !== 'OWNER' && membership.role !== 'ADMIN') return c.json({ error: 'forbidden' }, 403)
+
+  const org = membership.org
+  const normalizedConfirm = confirmName.trim()
+  if (normalizedConfirm !== org.name && normalizedConfirm !== org.slug) {
+    return c.json({ error: 'confirmation_mismatch', message: 'اكتب اسم الشركة أو slug كما هو للتأكيد' }, 400)
+  }
+
+  const auditBase = {
+    orgId,
+    userId: auth.userId,
+    entityType: 'Organization',
+    entityId: orgId,
+    ipAddress: c.req.header('x-forwarded-for') || null,
+    userAgent: c.req.header('user-agent') || null,
+  }
+
+  if (mode === 'clean_company') {
+    const newOrg = await prisma.$transaction(async (tx) => {
+      const created = await tx.organization.create({
+        data: {
+          slug: `org-${Math.random().toString(36).slice(2, 10)}`,
+          name: `${org.name} · نسخة نظيفة`,
+          legalName: org.legalName,
+          country: org.country,
+          baseCurrency: org.baseCurrency,
+          fiscalYearStart: org.fiscalYearStart,
+          fiscalYearEnd: org.fiscalYearEnd,
+          vatNumber: org.vatNumber,
+          crNumber: org.crNumber,
+          email: org.email,
+          phone: org.phone,
+          website: org.website,
+          addressLine: org.addressLine,
+          city: org.city,
+          region: org.region,
+          postalCode: org.postalCode,
+          district: org.district,
+          buildingNumber: org.buildingNumber,
+          streetName: org.streetName,
+          industry: org.industry,
+          memberships: { create: { userId: auth.userId, role: 'OWNER' } },
+        },
+      })
+      await seedCompanyDefaults(tx, created.id)
+      await tx.auditLog.create({
+        data: {
+          orgId,
+          userId: auth.userId,
+          action: 'CLEAN_COMPANY_CREATED',
+          entityType: 'Organization',
+          entityId: created.id,
+          metadata: { sourceOrgId: orgId, newOrgId: created.id },
+        },
+      })
+      return created
+    })
+    return c.json({ ok: true, mode, org: newOrg }, 201)
+  }
+
+  await prisma.auditLog.create({
+    data: {
+      ...auditBase,
+      action: 'DATA_RESET_REQUESTED',
+      severity: 'WARNING',
+      metadata: { mode },
+    },
+  })
+  const result = await resetCompanyData(orgId, mode)
+  await prisma.auditLog.create({
+    data: {
+      ...auditBase,
+      action: 'DATA_RESET_COMPLETED',
+      severity: 'WARNING',
+      metadata: { mode, result },
+    },
+  })
+  return c.json({ ok: true, mode, ...result })
+})
+
+// GET /orgs/:id/audit-log — latest audit records for Settings/Admin
+orgsRoutes.get('/:id/audit-log', async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const limit = Math.min(Number(c.req.query('limit') || '50'), 200)
+  const membership = await prisma.orgMembership.findUnique({
+    where: { userId_orgId: { userId: auth.userId, orgId } },
+  })
+  if (!membership) return c.json({ error: 'not_a_member' }, 403)
+  const items = await prisma.auditLog.findMany({
+    where: { orgId },
+    orderBy: { createdAt: 'desc' },
+    take: limit,
+  })
+  return c.json({ items })
 })
 
 // GET /orgs/:id/numbering · returns the numberingSettings JSON

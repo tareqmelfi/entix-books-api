@@ -144,33 +144,38 @@ model Organization {
   createdAt              DateTime  @default(now())
   updatedAt              DateTime  @updatedAt
 
-  memberships     OrgMembership[]
-  branches        Branch[]
-  contacts        Contact[]
-  accounts        Account[]
-  invoices        Invoice[]
-  bills           Bill[]
-  journals        JournalEntry[]
-  fiscalPeriods   FiscalPeriod[]
-  products        Product[]
-  taxes           TaxRate[]
-  bankAccounts    BankAccount[]
-  costCenters     CostCenter[]
-  projects        Project[]
-  fixedAssets     FixedAsset[]
-  expenses        Expense[]
-  quotes          Quote[]
-  creditNotes     CreditNote[]
-  vouchers        Voucher[]
-  notifications   Notification[]
-  signatures      SignatureRequest[]
-  aiBilling       AiBilling?
-  aiUsageLogs     AiUsageLog[]
-  warehouses      Warehouse[]
-  stockLevels     StockLevel[]
-  stockMovements  StockMovement[]
-  loyaltyAccounts LoyaltyAccount[]
-  inboxMessages   InboxMessage[]
+  memberships       OrgMembership[]
+  branches          Branch[]
+  contacts          Contact[]
+  accounts          Account[]
+  invoices          Invoice[]
+  bills             Bill[]
+  journals          JournalEntry[]
+  fiscalPeriods     FiscalPeriod[]
+  products          Product[]
+  taxes             TaxRate[]
+  bankAccounts      BankAccount[]
+  costCenters       CostCenter[]
+  projects          Project[]
+  fixedAssets       FixedAsset[]
+  expenses          Expense[]
+  quotes            Quote[]
+  creditNotes       CreditNote[]
+  vouchers          Voucher[]
+  notifications     Notification[]
+  signatures        SignatureRequest[]
+  aiBilling         AiBilling?
+  aiUsageLogs       AiUsageLog[]
+  warehouses        Warehouse[]
+  stockLevels       StockLevel[]
+  stockMovements    StockMovement[]
+  loyaltyAccounts   LoyaltyAccount[]
+  inboxMessages     InboxMessage[]
+  auditLogs         AuditLog[]
+  employeeContracts EmployeeContract[]
+  payrollSettings   PayrollSetting?
+  payrollRuns       PayrollRun[]
+  supplierCredits   SupplierCredit[]
 
   @@index([slug])
 }
@@ -298,12 +303,15 @@ model Contact {
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
 
-  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  invoices    Invoice[]
-  bills       Bill[]
-  quotes      Quote[]
-  creditNotes CreditNote[]
-  vouchers    Voucher[]
+  org               Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invoices          Invoice[]
+  bills             Bill[]
+  quotes            Quote[]
+  creditNotes       CreditNote[]
+  vouchers          Voucher[]
+  employeeContracts EmployeeContract[]
+  payrollLines      PayrollLine[]
+  supplierCredits   SupplierCredit[]
 
   @@index([orgId])
   @@index([orgId, type])
@@ -607,10 +615,11 @@ model Bill {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  contact  Contact      @relation(fields: [contactId], references: [id])
-  lines    BillLine[]
-  payments Payment[]
+  org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact         Contact          @relation(fields: [contactId], references: [id])
+  lines           BillLine[]
+  payments        Payment[]
+  supplierCredits SupplierCredit[]
 
   @@unique([orgId, billNumber])
   @@index([orgId, status])
@@ -635,9 +644,78 @@ model BillLine {
   taxRateId   String?
   subtotal    Decimal @db.Decimal(18, 4)
 
-  bill    Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
-  product Product? @relation(fields: [productId], references: [id])
-  taxRate TaxRate? @relation(fields: [taxRateId], references: [id])
+  bill                Bill                 @relation(fields: [billId], references: [id], onDelete: Cascade)
+  product             Product?             @relation(fields: [productId], references: [id])
+  taxRate             TaxRate?             @relation(fields: [taxRateId], references: [id])
+  supplierCreditLines SupplierCreditLine[]
+}
+
+// ============================================================================
+// 5.5 · SUPPLIER CREDITS (purchase returns / debit notes)
+// ============================================================================
+
+model SupplierCredit {
+  id             String               @id @default(cuid())
+  orgId          String
+  contactId      String
+  originalBillId String?
+  creditNumber   String
+  status         SupplierCreditStatus @default(DRAFT)
+  reason         SupplierCreditReason @default(RETURN)
+  issueDate      DateTime
+  currency       String               @default("SAR")
+  exchangeRate   Decimal              @default(1) @db.Decimal(18, 8)
+  subtotal       Decimal              @default(0) @db.Decimal(18, 4)
+  taxTotal       Decimal              @default(0) @db.Decimal(18, 4)
+  total          Decimal              @default(0) @db.Decimal(18, 4)
+  notes          String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  org          Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact      Contact              @relation(fields: [contactId], references: [id])
+  originalBill Bill?                @relation(fields: [originalBillId], references: [id])
+  lines        SupplierCreditLine[]
+
+  @@unique([orgId, creditNumber])
+  @@index([orgId, status])
+  @@index([orgId, contactId])
+  @@index([orgId, originalBillId])
+}
+
+enum SupplierCreditStatus {
+  DRAFT
+  ISSUED
+  APPLIED
+  CANCELLED
+}
+
+enum SupplierCreditReason {
+  RETURN
+  DISCOUNT
+  PRICING_ERROR
+  QUALITY_ISSUE
+  OTHER
+}
+
+model SupplierCreditLine {
+  id                 String  @id @default(cuid())
+  supplierCreditId   String
+  originalBillLineId String?
+  productId          String?
+  description        String
+  quantity           Decimal @db.Decimal(18, 4)
+  unitPrice          Decimal @db.Decimal(18, 4)
+  taxRateId          String?
+  subtotal           Decimal @db.Decimal(18, 4)
+
+  supplierCredit   SupplierCredit @relation(fields: [supplierCreditId], references: [id], onDelete: Cascade)
+  originalBillLine BillLine?      @relation(fields: [originalBillLineId], references: [id])
+  product          Product?       @relation(fields: [productId], references: [id])
+  taxRate          TaxRate?       @relation(fields: [taxRateId], references: [id])
+
+  @@index([supplierCreditId])
+  @@index([productId])
 }
 
 // ============================================================================
@@ -699,12 +777,13 @@ model Product {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
-  org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  taxRate         TaxRate?         @relation(fields: [taxRateId], references: [id])
-  invoiceLines    InvoiceLine[]
-  creditNoteLines CreditNoteLine[]
-  billLines       BillLine[]
-  quoteLines      QuoteLine[]
+  org                 Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  taxRate             TaxRate?             @relation(fields: [taxRateId], references: [id])
+  invoiceLines        InvoiceLine[]
+  creditNoteLines     CreditNoteLine[]
+  supplierCreditLines SupplierCreditLine[]
+  billLines           BillLine[]
+  quoteLines          QuoteLine[]
 
   @@unique([orgId, sku])
   @@index([orgId])
@@ -733,13 +812,14 @@ model TaxRate {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  invoiceLines    InvoiceLine[]
-  creditNoteLines CreditNoteLine[]
-  billLines       BillLine[]
-  products        Product[]
-  expenses        Expense[]
-  quoteLines      QuoteLine[]
+  org                 Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invoiceLines        InvoiceLine[]
+  creditNoteLines     CreditNoteLine[]
+  supplierCreditLines SupplierCreditLine[]
+  billLines           BillLine[]
+  products            Product[]
+  expenses            Expense[]
+  quoteLines          QuoteLine[]
 
   @@index([orgId])
 }
@@ -1247,4 +1327,138 @@ enum InboxStatus {
   APPROVED // user accepted · bill created
   REJECTED // user dismissed
   ERROR // extraction failed
+}
+
+// ============================================================================
+// 14 · PAYROLL (employees, contracts, runs)
+// ============================================================================
+
+model EmployeeContract {
+  id                 String    @id @default(cuid())
+  orgId              String
+  contactId          String
+  employeeNumber     String?
+  jobTitle           String?
+  department         String?
+  nationalityCode    String    @default("SA")
+  iban               String?
+  bankId             String?
+  basicSalary        Decimal   @default(0) @db.Decimal(18, 4)
+  housingAllowance   Decimal   @default(0) @db.Decimal(18, 4)
+  transportAllowance Decimal   @default(0) @db.Decimal(18, 4)
+  otherAllowances    Decimal   @default(0) @db.Decimal(18, 4)
+  otherDeductions    Decimal   @default(0) @db.Decimal(18, 4)
+  sanedEnabled       Boolean   @default(true)
+  startDate          DateTime?
+  endDate            DateTime?
+  status             String    @default("ACTIVE")
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact      Contact       @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  payrollLines PayrollLine[]
+
+  @@unique([orgId, contactId])
+  @@index([orgId, status])
+}
+
+model PayrollSetting {
+  id              String   @id @default(cuid())
+  orgId           String   @unique
+  employerId      String?
+  establishmentId String?
+  currency        String   @default("SAR")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model PayrollRun {
+  id              String           @id @default(cuid())
+  orgId           String
+  runNumber       String
+  period          String
+  status          PayrollRunStatus @default(DRAFT)
+  currency        String           @default("SAR")
+  grossSalary     Decimal          @default(0) @db.Decimal(18, 4)
+  employeeGosi    Decimal          @default(0) @db.Decimal(18, 4)
+  employerGosi    Decimal          @default(0) @db.Decimal(18, 4)
+  netSalary       Decimal          @default(0) @db.Decimal(18, 4)
+  employerCost    Decimal          @default(0) @db.Decimal(18, 4)
+  notes           String?
+  createdById     String?
+  postedJournalId String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  org   Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  lines PayrollLine[]
+
+  @@unique([orgId, runNumber])
+  @@index([orgId, period])
+  @@index([orgId, status])
+}
+
+enum PayrollRunStatus {
+  DRAFT
+  APPROVED
+  POSTED
+  PAID
+  CANCELLED
+}
+
+model PayrollLine {
+  id                 String   @id @default(cuid())
+  orgId              String
+  payrollRunId       String
+  employeeId         String
+  contractId         String?
+  nationalityCode    String   @default("SA")
+  basicSalary        Decimal  @default(0) @db.Decimal(18, 4)
+  housingAllowance   Decimal  @default(0) @db.Decimal(18, 4)
+  transportAllowance Decimal  @default(0) @db.Decimal(18, 4)
+  otherAllowances    Decimal  @default(0) @db.Decimal(18, 4)
+  otherDeductions    Decimal  @default(0) @db.Decimal(18, 4)
+  grossSalary        Decimal  @default(0) @db.Decimal(18, 4)
+  gosiBase           Decimal  @default(0) @db.Decimal(18, 4)
+  employeeGosi       Decimal  @default(0) @db.Decimal(18, 4)
+  employerGosi       Decimal  @default(0) @db.Decimal(18, 4)
+  totalDeductions    Decimal  @default(0) @db.Decimal(18, 4)
+  netSalary          Decimal  @default(0) @db.Decimal(18, 4)
+  iban               String?
+  bankId             String?
+  createdAt          DateTime @default(now())
+
+  payrollRun PayrollRun        @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employee   Contact           @relation(fields: [employeeId], references: [id])
+  contract   EmployeeContract? @relation(fields: [contractId], references: [id])
+
+  @@index([orgId, employeeId])
+  @@index([payrollRunId])
+}
+
+// ============================================================================
+// 15 · AUDIT LOG
+// ============================================================================
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  orgId      String
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  severity   String   @default("INFO")
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@index([orgId, createdAt])
+  @@index([orgId, entityType, entityId])
+  @@index([userId])
 }

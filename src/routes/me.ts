@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { Prisma } from '@prisma/client'
 import { requireAuth } from '../auth.js'
 import { prisma } from '../db.js'
+import { resetCompanyData } from '../lib/company-reset.js'
 
 export const meRoutes = new Hono()
 
@@ -63,17 +64,38 @@ meRoutes.post('/bootstrap', async (c) => {
   return c.json({ org, role: 'OWNER', created: true }, 201)
 })
 
-// DELETE /me/account-data — wipe my org's data + leave the user (for retesting)
+// DELETE /me/account-data — legacy safe reset, keeps org/user/session intact
 meRoutes.delete('/account-data', async (c) => {
   const auth = c.get('auth')
   const memberships = await prisma.orgMembership.findMany({
     where: { userId: auth.userId, role: 'OWNER' },
-    select: { orgId: true },
+    include: { org: true },
   })
   for (const m of memberships) {
-    await prisma.organization.delete({ where: { id: m.orgId } })
+    await prisma.auditLog.create({
+      data: {
+        orgId: m.orgId,
+        userId: auth.userId,
+        action: 'LEGACY_ACCOUNT_DATA_RESET_REQUESTED',
+        entityType: 'Organization',
+        entityId: m.orgId,
+        severity: 'WARNING',
+        metadata: { endpoint: '/me/account-data' },
+      },
+    })
+    await resetCompanyData(m.orgId, 'blank')
+    await prisma.auditLog.create({
+      data: {
+        orgId: m.orgId,
+        userId: auth.userId,
+        action: 'LEGACY_ACCOUNT_DATA_RESET_COMPLETED',
+        entityType: 'Organization',
+        entityId: m.orgId,
+        severity: 'WARNING',
+      },
+    })
   }
-  return c.json({ wiped: memberships.length })
+  return c.json({ reset: memberships.length })
 })
 
 async function seedDefaultAccounts(orgId: string) {

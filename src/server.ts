@@ -14,6 +14,7 @@ import { orgsRoutes } from './routes/orgs.js'
 import { adminResetRoutes } from './routes/admin-reset.js'
 import { invoicesRoutes } from './routes/invoices.js'
 import { creditNotesRoutes } from './routes/credit-notes.js'
+import { supplierCreditsRoutes } from './routes/supplier-credits.js'
 import { accountsRoutes } from './routes/accounts.js'
 import { meRoutes } from './routes/me.js'
 import { expensesRoutes } from './routes/expenses.js'
@@ -112,6 +113,7 @@ orgScoped.use('*', requireOrg)
 orgScoped.route('/contacts', contactsRoutes)
 orgScoped.route('/invoices', invoicesRoutes)
 orgScoped.route('/credit-notes', creditNotesRoutes)
+orgScoped.route('/supplier-credits', supplierCreditsRoutes)
 orgScoped.route('/accounts', accountsRoutes)
 orgScoped.route('/expenses', expensesRoutes)
 orgScoped.route('/quotes', quotesRoutes)
