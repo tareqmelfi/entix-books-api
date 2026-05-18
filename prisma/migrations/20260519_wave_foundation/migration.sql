@@ -1,14 +1,26 @@
 -- CreateEnum
-CREATE TYPE "SupplierCreditStatus" AS ENUM ('DRAFT', 'ISSUED', 'APPLIED', 'CANCELLED');
+DO $$ BEGIN
+    CREATE TYPE "SupplierCreditStatus" AS ENUM ('DRAFT', 'ISSUED', 'APPLIED', 'CANCELLED');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "SupplierCreditReason" AS ENUM ('RETURN', 'DISCOUNT', 'PRICING_ERROR', 'QUALITY_ISSUE', 'OTHER');
+DO $$ BEGIN
+    CREATE TYPE "SupplierCreditReason" AS ENUM ('RETURN', 'DISCOUNT', 'PRICING_ERROR', 'QUALITY_ISSUE', 'OTHER');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- CreateEnum
-CREATE TYPE "PayrollRunStatus" AS ENUM ('DRAFT', 'APPROVED', 'POSTED', 'PAID', 'CANCELLED');
+DO $$ BEGIN
+    CREATE TYPE "PayrollRunStatus" AS ENUM ('DRAFT', 'APPROVED', 'POSTED', 'PAID', 'CANCELLED');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- CreateTable
-CREATE TABLE "SupplierCredit" (
+CREATE TABLE IF NOT EXISTS "SupplierCredit" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
     "contactId" TEXT NOT NULL,
@@ -30,7 +42,7 @@ CREATE TABLE "SupplierCredit" (
 );
 
 -- CreateTable
-CREATE TABLE "SupplierCreditLine" (
+CREATE TABLE IF NOT EXISTS "SupplierCreditLine" (
     "id" TEXT NOT NULL,
     "supplierCreditId" TEXT NOT NULL,
     "originalBillLineId" TEXT,
@@ -45,7 +57,7 @@ CREATE TABLE "SupplierCreditLine" (
 );
 
 -- CreateTable
-CREATE TABLE "EmployeeContract" (
+CREATE TABLE IF NOT EXISTS "EmployeeContract" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
     "contactId" TEXT NOT NULL,
@@ -71,7 +83,7 @@ CREATE TABLE "EmployeeContract" (
 );
 
 -- CreateTable
-CREATE TABLE "PayrollSetting" (
+CREATE TABLE IF NOT EXISTS "PayrollSetting" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
     "employerId" TEXT,
@@ -84,7 +96,7 @@ CREATE TABLE "PayrollSetting" (
 );
 
 -- CreateTable
-CREATE TABLE "PayrollRun" (
+CREATE TABLE IF NOT EXISTS "PayrollRun" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
     "runNumber" TEXT NOT NULL,
@@ -106,7 +118,7 @@ CREATE TABLE "PayrollRun" (
 );
 
 -- CreateTable
-CREATE TABLE "PayrollLine" (
+CREATE TABLE IF NOT EXISTS "PayrollLine" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
     "payrollRunId" TEXT NOT NULL,
@@ -132,7 +144,7 @@ CREATE TABLE "PayrollLine" (
 );
 
 -- CreateTable
-CREATE TABLE "AuditLog" (
+CREATE TABLE IF NOT EXISTS "AuditLog" (
     "id" TEXT NOT NULL,
     "orgId" TEXT NOT NULL,
     "userId" TEXT,
@@ -149,98 +161,157 @@ CREATE TABLE "AuditLog" (
 );
 
 -- CreateIndex
-CREATE INDEX "SupplierCredit_orgId_status_idx" ON "SupplierCredit"("orgId", "status");
+CREATE INDEX IF NOT EXISTS "SupplierCredit_orgId_status_idx" ON "SupplierCredit"("orgId", "status");
 
 -- CreateIndex
-CREATE INDEX "SupplierCredit_orgId_contactId_idx" ON "SupplierCredit"("orgId", "contactId");
+CREATE INDEX IF NOT EXISTS "SupplierCredit_orgId_contactId_idx" ON "SupplierCredit"("orgId", "contactId");
 
 -- CreateIndex
-CREATE INDEX "SupplierCredit_orgId_originalBillId_idx" ON "SupplierCredit"("orgId", "originalBillId");
+CREATE INDEX IF NOT EXISTS "SupplierCredit_orgId_originalBillId_idx" ON "SupplierCredit"("orgId", "originalBillId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "SupplierCredit_orgId_creditNumber_key" ON "SupplierCredit"("orgId", "creditNumber");
+CREATE UNIQUE INDEX IF NOT EXISTS "SupplierCredit_orgId_creditNumber_key" ON "SupplierCredit"("orgId", "creditNumber");
 
 -- CreateIndex
-CREATE INDEX "SupplierCreditLine_supplierCreditId_idx" ON "SupplierCreditLine"("supplierCreditId");
+CREATE INDEX IF NOT EXISTS "SupplierCreditLine_supplierCreditId_idx" ON "SupplierCreditLine"("supplierCreditId");
 
 -- CreateIndex
-CREATE INDEX "SupplierCreditLine_productId_idx" ON "SupplierCreditLine"("productId");
+CREATE INDEX IF NOT EXISTS "SupplierCreditLine_productId_idx" ON "SupplierCreditLine"("productId");
 
 -- CreateIndex
-CREATE INDEX "EmployeeContract_orgId_status_idx" ON "EmployeeContract"("orgId", "status");
+CREATE INDEX IF NOT EXISTS "EmployeeContract_orgId_status_idx" ON "EmployeeContract"("orgId", "status");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "EmployeeContract_orgId_contactId_key" ON "EmployeeContract"("orgId", "contactId");
+CREATE UNIQUE INDEX IF NOT EXISTS "EmployeeContract_orgId_contactId_key" ON "EmployeeContract"("orgId", "contactId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "PayrollSetting_orgId_key" ON "PayrollSetting"("orgId");
+CREATE UNIQUE INDEX IF NOT EXISTS "PayrollSetting_orgId_key" ON "PayrollSetting"("orgId");
 
 -- CreateIndex
-CREATE INDEX "PayrollRun_orgId_period_idx" ON "PayrollRun"("orgId", "period");
+CREATE INDEX IF NOT EXISTS "PayrollRun_orgId_period_idx" ON "PayrollRun"("orgId", "period");
 
 -- CreateIndex
-CREATE INDEX "PayrollRun_orgId_status_idx" ON "PayrollRun"("orgId", "status");
+CREATE INDEX IF NOT EXISTS "PayrollRun_orgId_status_idx" ON "PayrollRun"("orgId", "status");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "PayrollRun_orgId_runNumber_key" ON "PayrollRun"("orgId", "runNumber");
+CREATE UNIQUE INDEX IF NOT EXISTS "PayrollRun_orgId_runNumber_key" ON "PayrollRun"("orgId", "runNumber");
 
 -- CreateIndex
-CREATE INDEX "PayrollLine_orgId_employeeId_idx" ON "PayrollLine"("orgId", "employeeId");
+CREATE INDEX IF NOT EXISTS "PayrollLine_orgId_employeeId_idx" ON "PayrollLine"("orgId", "employeeId");
 
 -- CreateIndex
-CREATE INDEX "PayrollLine_payrollRunId_idx" ON "PayrollLine"("payrollRunId");
+CREATE INDEX IF NOT EXISTS "PayrollLine_payrollRunId_idx" ON "PayrollLine"("payrollRunId");
 
 -- CreateIndex
-CREATE INDEX "AuditLog_orgId_createdAt_idx" ON "AuditLog"("orgId", "createdAt");
+CREATE INDEX IF NOT EXISTS "AuditLog_orgId_createdAt_idx" ON "AuditLog"("orgId", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "AuditLog_orgId_entityType_entityId_idx" ON "AuditLog"("orgId", "entityType", "entityId");
+CREATE INDEX IF NOT EXISTS "AuditLog_orgId_entityType_entityId_idx" ON "AuditLog"("orgId", "entityType", "entityId");
 
 -- CreateIndex
-CREATE INDEX "AuditLog_userId_idx" ON "AuditLog"("userId");
+CREATE INDEX IF NOT EXISTS "AuditLog_userId_idx" ON "AuditLog"("userId");
 
 -- AddForeignKey
-ALTER TABLE "SupplierCredit" ADD CONSTRAINT "SupplierCredit_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "SupplierCredit" ADD CONSTRAINT "SupplierCredit_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "SupplierCredit" ADD CONSTRAINT "SupplierCredit_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "SupplierCredit" ADD CONSTRAINT "SupplierCredit_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "SupplierCredit" ADD CONSTRAINT "SupplierCredit_originalBillId_fkey" FOREIGN KEY ("originalBillId") REFERENCES "Bill"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "SupplierCredit" ADD CONSTRAINT "SupplierCredit_originalBillId_fkey" FOREIGN KEY ("originalBillId") REFERENCES "Bill"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "SupplierCreditLine" ADD CONSTRAINT "SupplierCreditLine_supplierCreditId_fkey" FOREIGN KEY ("supplierCreditId") REFERENCES "SupplierCredit"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "SupplierCreditLine" ADD CONSTRAINT "SupplierCreditLine_supplierCreditId_fkey" FOREIGN KEY ("supplierCreditId") REFERENCES "SupplierCredit"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "SupplierCreditLine" ADD CONSTRAINT "SupplierCreditLine_originalBillLineId_fkey" FOREIGN KEY ("originalBillLineId") REFERENCES "BillLine"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "SupplierCreditLine" ADD CONSTRAINT "SupplierCreditLine_originalBillLineId_fkey" FOREIGN KEY ("originalBillLineId") REFERENCES "BillLine"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "SupplierCreditLine" ADD CONSTRAINT "SupplierCreditLine_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "SupplierCreditLine" ADD CONSTRAINT "SupplierCreditLine_productId_fkey" FOREIGN KEY ("productId") REFERENCES "Product"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "SupplierCreditLine" ADD CONSTRAINT "SupplierCreditLine_taxRateId_fkey" FOREIGN KEY ("taxRateId") REFERENCES "TaxRate"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "SupplierCreditLine" ADD CONSTRAINT "SupplierCreditLine_taxRateId_fkey" FOREIGN KEY ("taxRateId") REFERENCES "TaxRate"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "EmployeeContract" ADD CONSTRAINT "EmployeeContract_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "EmployeeContract" ADD CONSTRAINT "EmployeeContract_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "EmployeeContract" ADD CONSTRAINT "EmployeeContract_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "EmployeeContract" ADD CONSTRAINT "EmployeeContract_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "PayrollSetting" ADD CONSTRAINT "PayrollSetting_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "PayrollSetting" ADD CONSTRAINT "PayrollSetting_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "PayrollRun" ADD CONSTRAINT "PayrollRun_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "PayrollRun" ADD CONSTRAINT "PayrollRun_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "PayrollLine" ADD CONSTRAINT "PayrollLine_payrollRunId_fkey" FOREIGN KEY ("payrollRunId") REFERENCES "PayrollRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "PayrollLine" ADD CONSTRAINT "PayrollLine_payrollRunId_fkey" FOREIGN KEY ("payrollRunId") REFERENCES "PayrollRun"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "PayrollLine" ADD CONSTRAINT "PayrollLine_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Contact"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "PayrollLine" ADD CONSTRAINT "PayrollLine_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Contact"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "PayrollLine" ADD CONSTRAINT "PayrollLine_contractId_fkey" FOREIGN KEY ("contractId") REFERENCES "EmployeeContract"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+    ALTER TABLE "PayrollLine" ADD CONSTRAINT "PayrollLine_contractId_fkey" FOREIGN KEY ("contractId") REFERENCES "EmployeeContract"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
+DO $$ BEGIN
+    ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_orgId_fkey" FOREIGN KEY ("orgId") REFERENCES "Organization"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;

@@ -41,6 +41,5 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-# Push schema (creates/updates tables from prisma/schema.prisma) + start server
-# Using db push instead of migrate deploy because we don't ship migration files in V0.1
-CMD ["sh", "-c", "npx prisma db push --skip-generate --accept-data-loss && node dist/server.js"]
+# Start server only. Coolify runs Prisma migrations as the deployment command.
+CMD ["node", "dist/server.js"]
