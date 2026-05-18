@@ -1,7 +1,7 @@
 /**
  * Chart of Accounts · industry templates
  *
- * Per طارق · "اضف قوالب حسب النشاط مع شجرة بأفضل ممارسة"
+ * Product requirement: "اضف قوالب حسب النشاط مع شجرة بأفضل ممارسة"
  *
  * Each template extends BASE_COA (the universal Saudi-default 20-account starter)
  * with industry-specific sub-accounts. Accounts use a 5-digit code:
@@ -13,7 +13,7 @@
  *   6xxxx = Operating    61xxx Salaries · 62xxx Rent · 63xxx Utilities · 64xxx Marketing · 65xxx Admin
  *   7xxxx = Other Exp    71xxx Bank Fees · 72xxx Depreciation · 73xxx Interest
  *
- * Equity sub-categorization (per طارق):
+ * Equity sub-categorization (per product requirement):
  *   31000  رأس المال (Owner Capital)            · default
  *   31100  رأس مال شريك (Partner Capital)        · for partnerships
  *   31200  حقوق الشركاء (Partners' Equity)       · LLC

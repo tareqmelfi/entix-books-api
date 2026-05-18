@@ -1,7 +1,7 @@
 /**
  * Plaid · US bank/credit-card connectivity
  *
- * Per طارق · UX-78 · "اربط مع بليد للبنوك الأمريكية حتى لو الشركة سعودية"
+ * Product requirement: UX-78 · "اربط مع بليد للبنوك الأمريكية حتى لو الشركة سعودية"
  *
  * Flow:
  *   1. Frontend asks /api/plaid/link-token → opens Plaid Link UI in browser

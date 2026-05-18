@@ -17,7 +17,7 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { requireAuth, requireOrg } from '../auth.js'
 import { prisma } from '../db.js'
-import { encryptSecret, maskKey } from '../lib/crypto.js'
+import { decryptSecret, encryptSecret, maskKey } from '../lib/crypto.js'
 
 export const aiBillingRoutes = new Hono()
 
@@ -137,11 +137,10 @@ aiBillingRoutes.post('/test-key', requireOrg, async (c) => {
   if (!billing || !billing.byokProvider) {
     return c.json({ ok: false, error: 'no_key', message: 'لم يُضَف مفتاح BYOK لهذه الشركة' }, 400)
   }
-  // Decrypt key (lib/byok handles this)
+  // Decrypt key stored in Postgres.
   let key: string | null = null
   try {
-    const { decryptByokKey } = await import('../lib/byok.js') as any
-    key = billing.byokKeyEncrypted ? decryptByokKey(billing.byokKeyEncrypted) : null
+    key = billing.byokKeyEncrypted ? decryptSecret(billing.byokKeyEncrypted) : null
   } catch (e: any) {
     return c.json({ ok: false, error: 'decrypt_failed', message: e?.message || 'failed to decrypt key' })
   }
@@ -197,7 +196,7 @@ aiBillingRoutes.post('/test-key', requireOrg, async (c) => {
 // TODO: proper RBAC + audit log
 
 function isAdminEmail(email: string): boolean {
-  const list = (process.env.ADMIN_EMAILS || 'tareq@fc.sa').split(',').map((s) => s.trim().toLowerCase())
+  const list = (process.env.ADMIN_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
   return list.includes(email.toLowerCase())
 }
 

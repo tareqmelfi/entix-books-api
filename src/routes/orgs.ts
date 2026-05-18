@@ -556,7 +556,7 @@ orgsRoutes.post('/_/seed-two-demos', async (c) => {
         state: v.country === 'US' ? 'WY' : null,
         zatcaEnabled: false,
         defaultInvoiceLanguage: v.country === 'SA' ? 'ar' : 'en',
-        members: { create: { userId: auth.userId, role: 'OWNER' } },
+        memberships: { create: { userId: auth.userId, role: 'OWNER' } },
       },
     })
 

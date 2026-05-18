@@ -175,7 +175,7 @@ const productSchema = z.object({
   expenseAccountId: z.string().optional().nullable(),
 })
 
-/** Auto-derive category from SKU prefix (e.g. "FC-ADV-001" → "ADV") */
+/** Auto-derive category from SKU prefix (e.g. "EN-ADV-001" -> "ADV") */
 function categoryFromSku(sku?: string | null): string | null {
   if (!sku) return null
   const m = sku.match(/^[A-Z]+-([A-Z]+)-/)
@@ -337,15 +337,15 @@ productsRoutes.post('/import', zValidator('json', importSchema), async (c) => {
   })
 })
 
-// ── One-click seed of FC catalog (60+ products) ─────────────────────────────
-productsRoutes.post('/seed-fc-catalog', async (c) => {
+// ── One-click seed of ENSIDEX catalog (60+ products) ────────────────────────
+productsRoutes.post('/seed-ensidex-catalog', async (c) => {
   const orgId = c.get('orgId') as string
-  const { FC_PRODUCTS } = await import('../lib/fc-products-catalog.js')
+  const { ENSIDEX_PRODUCTS } = await import('../lib/ensidex-products-catalog.js')
   const existing = await prisma.product.findMany({ where: { orgId }, select: { sku: true } })
   const existingSkus = new Set(existing.map(e => e.sku).filter(Boolean) as string[])
 
   let created = 0, skipped = 0
-  for (const p of FC_PRODUCTS) {
+  for (const p of ENSIDEX_PRODUCTS) {
     if (existingSkus.has(p.sku)) { skipped++; continue }
     try {
       await prisma.product.create({
@@ -367,7 +367,7 @@ productsRoutes.post('/seed-fc-catalog', async (c) => {
   }
   return c.json({
     ok: true, created, skipped,
-    message: `تم تثبيت كتالوج Falcon Core/ENSIDEX · ${created} منتج جديد · ${skipped} مكرر`,
+    message: `تم تثبيت كتالوج ENSIDEX الداخلي · ${created} منتج جديد · ${skipped} مكرر`,
   })
 })
 

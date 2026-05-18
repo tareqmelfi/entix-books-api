@@ -371,11 +371,10 @@ const importRowSchema = z.object({
   code: z.string().min(1).max(40),
   name: z.string().min(1).max(255),
   nameAr: z.string().max(500).optional().nullable(),
-  type: z.union([
-    z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE']),
-    z.literal(''),
-    z.null(),
-  ]).optional().transform(v => v && v !== '' ? v : undefined),
+  type: z.preprocess(
+    (v) => (v === '' || v === null ? undefined : v),
+    z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'REVENUE', 'EXPENSE']).optional(),
+  ),
   parentCode: z.string().max(40).optional().nullable(),
   description: z.string().max(1000).optional().nullable(),
 })

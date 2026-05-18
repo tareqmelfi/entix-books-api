@@ -3,6 +3,7 @@
  * POST /api/admin/reset-password   { email, newPassword }
  */
 import { Hono } from 'hono'
+import { randomUUID } from 'node:crypto'
 import { prisma } from '../db.js'
 import { auth } from '../auth.js'
 
@@ -40,6 +41,7 @@ adminResetRoutes.post('/reset-password', async (c) => {
   } else {
     await prisma.authAccount.create({
       data: {
+        id: randomUUID(),
         userId: user.id,
         accountId: user.id,
         providerId: 'credential',

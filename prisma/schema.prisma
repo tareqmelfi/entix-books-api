@@ -27,9 +27,9 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  memberships   OrgMembership[]
-  sessions      AuthSession[]
-  authAccounts  AuthAccount[]
+  memberships  OrgMembership[]
+  sessions     AuthSession[]
+  authAccounts AuthAccount[]
 
   @@index([email])
 }
@@ -88,45 +88,45 @@ model Verification {
 }
 
 model Organization {
-  id              String   @id @default(cuid())
-  slug            String   @unique // url-safe handle
-  name            String
-  legalName       String?
-  country         String   @default("SA") // ISO 3166-1 alpha-2
-  baseCurrency    String   @default("SAR") // ISO 4217
-  fiscalYearStart Int      @default(1) // month 1-12
-  vatNumber       String?  // KSA: 15-digit · US: EIN
-  crNumber        String?  // KSA: commercial registration
-  zatcaEnabled    Boolean  @default(false)
-  zatcaCsid       String?  // ZATCA-issued cryptographic stamp ID (base64)
-  zatcaCsidSecret String?  // ZATCA-issued secret token (base64)
-  zatcaMode       String?  @default("sandbox") // sandbox | simulation | production
-  zatcaIcv        Int      @default(0) // Invoice Counter Value · auto-increments per invoice
-  zatcaPih        String?  @db.Text // Previous Invoice Hash (running chain)
-  logoUrl         String?  // Square or wide · base64/URL · used as avatar
-  printLogoUrl    String?  // Optional · separate logo for invoices/contracts (higher-res preferred)
-  defaultInvoiceLanguage String? @default("ar") // "ar" | "en" · default print language for invoices/vouchers/reports
-  stampUrl        String?  // Official stamp · used on invoices/contracts
+  id                     String    @id @default(cuid())
+  slug                   String    @unique // url-safe handle
+  name                   String
+  legalName              String?
+  country                String    @default("SA") // ISO 3166-1 alpha-2
+  baseCurrency           String    @default("SAR") // ISO 4217
+  fiscalYearStart        Int       @default(1) // month 1-12
+  vatNumber              String? // KSA: 15-digit · US: EIN
+  crNumber               String? // KSA: commercial registration
+  zatcaEnabled           Boolean   @default(false)
+  zatcaCsid              String? // ZATCA-issued cryptographic stamp ID (base64)
+  zatcaCsidSecret        String? // ZATCA-issued secret token (base64)
+  zatcaMode              String?   @default("sandbox") // sandbox | simulation | production
+  zatcaIcv               Int       @default(0) // Invoice Counter Value · auto-increments per invoice
+  zatcaPih               String?   @db.Text // Previous Invoice Hash (running chain)
+  logoUrl                String? // Square or wide · base64/URL · used as avatar
+  printLogoUrl           String? // Optional · separate logo for invoices/contracts (higher-res preferred)
+  defaultInvoiceLanguage String?   @default("ar") // "ar" | "en" · default print language for invoices/vouchers/reports
+  stampUrl               String? // Official stamp · used on invoices/contracts
   /// Org address (used on invoices, ZATCA XML, contracts)
-  addressLine    String?
-  city           String?
-  region         String?
-  postalCode     String?
-  district       String?  // الحي
-  buildingNumber String?  // رقم المبنى
-  streetName     String?  // اسم الشارع
-  industry       String?  // مجال المنشأة
+  addressLine            String?
+  city                   String?
+  region                 String?
+  postalCode             String?
+  district               String? // الحي
+  buildingNumber         String? // رقم المبنى
+  streetName             String? // اسم الشارع
+  industry               String? // مجال المنشأة
   // Org contact info (used on invoices, ZATCA XML, contracts)
-  email          String?
-  phone          String?
-  website        String?
-  taxRegistrationDate DateTime?  // تاريخ التسجيل الضريبي الفعلي
-  firstVatPeriodStart DateTime?  // تاريخ استحقاق أول إقرار ضريبي
-  vatPeriod      String?  // الفترة الضريبية: monthly | quarterly
-  fiscalYearEnd  Int?     // نهاية السنة المالية (1-12) · derives fiscalYearStart = (end mod 12) + 1
+  email                  String?
+  phone                  String?
+  website                String?
+  taxRegistrationDate    DateTime? // تاريخ التسجيل الضريبي الفعلي
+  firstVatPeriodStart    DateTime? // تاريخ استحقاق أول إقرار ضريبي
+  vatPeriod              String? // الفترة الضريبية: monthly | quarterly
+  fiscalYearEnd          Int? // نهاية السنة المالية (1-12) · derives fiscalYearStart = (end mod 12) + 1
   // US-specific address fields
-  suiteUnit      String?  // Suite / Apt / Unit (US addresses)
-  state          String?  // US state code (WY, CA, ...)
+  suiteUnit              String? // Suite / Apt / Unit (US addresses)
+  state                  String? // US state code (WY, CA, ...)
   /// Numbering preferences · JSON shape:
   /// { contact: { prefix: "CUST-", padding: 4, start: 1, includeYear: false },
   ///   invoice: { prefix: "INV-{YYYY}-", padding: 4, start: 1 },
@@ -134,15 +134,15 @@ model Organization {
   ///   quote:   { prefix: "QT-{YYYY}-", padding: 4 },
   ///   receipt: { prefix: "R-{YYYY}-", padding: 4 },
   ///   payment: { prefix: "P-{YYYY}-", padding: 4 } }
-  numberingSettings Json?
+  numberingSettings      Json?
   /// Payment provider settings (encrypted at rest in production):
   /// { stripe: { secretKey: "sk_...", publishableKey: "pk_...", enabled: true },
   ///   paypal: { clientId: "...", clientSecret: "...", mode: "sandbox|live", enabled: true },
   ///   moyasar: { secretKey: "...", enabled: false },
   ///   tamara:  { token: "...", enabled: false } }
-  paymentSettings Json?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  paymentSettings        Json?
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   memberships     OrgMembership[]
   branches        Branch[]
@@ -160,6 +160,7 @@ model Organization {
   fixedAssets     FixedAsset[]
   expenses        Expense[]
   quotes          Quote[]
+  creditNotes     CreditNote[]
   vouchers        Voucher[]
   notifications   Notification[]
   signatures      SignatureRequest[]
@@ -181,8 +182,8 @@ model OrgMembership {
   role      OrgRole  @default(VIEWER)
   createdAt DateTime @default(now())
 
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([userId, orgId])
   @@index([orgId])
@@ -200,28 +201,28 @@ enum OrgRole {
 // ============================================================================
 
 model Account {
-  id          String      @id @default(cuid())
-  orgId       String
-  code        String      // 1000 · 1100 · etc
-  name        String
-  nameAr      String?
-  type        AccountType
-  subtype     String?     // bank · receivable · payable · ...
-  parentId    String?
-  description String?
-  isActive    Boolean     @default(true)
+  id                String      @id @default(cuid())
+  orgId             String
+  code              String // 1000 · 1100 · etc
+  name              String
+  nameAr            String?
+  type              AccountType
+  subtype           String? // bank · receivable · payable · ...
+  parentId          String?
+  description       String?
+  isActive          Boolean     @default(true)
   // Wafeq-style fields
-  cashFlowType    String? // OPERATING | INVESTING | FINANCING | NON_CASH
-  allowPosting    Boolean @default(true)  // can be selected when creating manual journal entries
-  allowPayment    Boolean @default(false) // can be selected when recording payments/vouchers
-  allowExpenseClaim Boolean @default(false) // can be selected in employee expense claims
-  isSystemAccount Boolean @default(false) // protected from edit/delete (auto-created accounts)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  cashFlowType      String? // OPERATING | INVESTING | FINANCING | NON_CASH
+  allowPosting      Boolean     @default(true) // can be selected when creating manual journal entries
+  allowPayment      Boolean     @default(false) // can be selected when recording payments/vouchers
+  allowExpenseClaim Boolean     @default(false) // can be selected in employee expense claims
+  isSystemAccount   Boolean     @default(false) // protected from edit/delete (auto-created accounts)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 
-  org         Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  parent      Account?      @relation("AccountTree", fields: [parentId], references: [id])
-  children    Account[]     @relation("AccountTree")
+  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  parent       Account?      @relation("AccountTree", fields: [parentId], references: [id])
+  children     Account[]     @relation("AccountTree")
   journalLines JournalLine[]
 
   @@unique([orgId, code])
@@ -241,67 +242,68 @@ enum AccountType {
 // ============================================================================
 
 model Contact {
-  id            String   @id @default(cuid())
-  orgId         String
+  id                 String            @id @default(cuid())
+  orgId              String
   /// User-facing custom code (e.g. "EN-CLI-BSMA" or "CUST-001") · auto-generated from numberingSettings if null.
-  customCode    String?
+  customCode         String?
   /// Legacy enum · kept for backward compatibility · derived from role flags below.
-  type          ContactType
+  type               ContactType
   /// Multi-role flags · a Person can wear several hats simultaneously (UX-46).
-  isCustomer    Boolean  @default(false)
-  isSupplier    Boolean  @default(false)
-  isEmployee    Boolean  @default(false)
-  isShareholder Boolean  @default(false)
-  isFreelancer  Boolean  @default(false)
+  isCustomer         Boolean           @default(false)
+  isSupplier         Boolean           @default(false)
+  isEmployee         Boolean           @default(false)
+  isShareholder      Boolean           @default(false)
+  isFreelancer       Boolean           @default(false)
   /// "INDIVIDUAL" or "COMPANY" · drives form fields & ZATCA classification (UX-47).
-  entityKind    ContactEntityKind @default(COMPANY)
-  displayName   String
-  legalName     String?
-  email         String?
-  phone         String?
+  entityKind         ContactEntityKind @default(COMPANY)
+  displayName        String
+  legalName          String?
+  email              String?
+  phone              String?
   /// Generic tax-id field · use country-specific labels in UI (VAT/EIN/SIRET/TRN/NIF/etc.).
-  taxId         String?
+  taxId              String?
   /// KSA-specific · kept for legacy data · new code should use taxId.
-  vatNumber     String?
-  crNumber      String?
+  vatNumber          String?
+  crNumber           String?
   /// National ID for individuals (Saudi: 10-digit hawiyya · others: passport/SSN).
-  nationalId    String?
+  nationalId         String?
   /// Foreign-entity flag · drives withholding-tax behavior and currency defaults.
-  isForeign     Boolean  @default(false)
+  isForeign          Boolean           @default(false)
   /// LEI (Legal Entity Identifier · ISO 17442) · 20 chars · global registry at gleif.org.
-  leiCode       String?
+  leiCode            String?
   /// Withholding-tax rate (%) for foreign entities · 0 if exempt or local.
-  withholdingTaxRate Decimal? @db.Decimal(5, 2)
+  withholdingTaxRate Decimal?          @db.Decimal(5, 2)
   /// Default currency for transactions with this contact (3-letter ISO).
-  defaultCurrency String? @db.VarChar(3)
-  addressLine1  String?
-  addressLine2  String?
-  city          String?
-  region        String?
+  defaultCurrency    String?           @db.VarChar(3)
+  addressLine1       String?
+  addressLine2       String?
+  city               String?
+  region             String?
   /// ISO-3166-1 alpha-2 country code · "SA" "US" "AE" "EG" "JO" "KW" "BH" "QA" "OM" "GB" etc.
-  country       String   @default("SA")
-  postalCode    String?
+  country            String            @default("SA")
+  postalCode         String?
   /// Free-form tags · comma-separated for now · upgrade to Tag relation later.
-  tags          String?
+  tags               String?
   /// Last interaction timestamp · for CRM "stale" filtering.
-  lastInteraction DateTime?
-  notes         String?
-  isActive      Boolean  @default(true)
+  lastInteraction    DateTime?
+  notes              String?
+  isActive           Boolean           @default(true)
   // CRM-light + Portal access
-  creditLimit   Decimal? @db.Decimal(18, 2)
-  paymentTerms  Int?     // net days · 0/15/30/60/90
-  portalToken   String?  @unique // for customer/supplier self-serve portal
-  portalEnabled Boolean  @default(false)
-  lifetimeValue Decimal? @db.Decimal(18, 2)
-  riskScore     Int?     // 0-100 · auto-computed by AI
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  creditLimit        Decimal?          @db.Decimal(18, 2)
+  paymentTerms       Int? // net days · 0/15/30/60/90
+  portalToken        String?           @unique // for customer/supplier self-serve portal
+  portalEnabled      Boolean           @default(false)
+  lifetimeValue      Decimal?          @db.Decimal(18, 2)
+  riskScore          Int? // 0-100 · auto-computed by AI
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
 
-  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  invoices  Invoice[]
-  bills     Bill[]
-  quotes    Quote[]
-  vouchers  Voucher[]
+  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invoices    Invoice[]
+  bills       Bill[]
+  quotes      Quote[]
+  creditNotes CreditNote[]
+  vouchers    Voucher[]
 
   @@index([orgId])
   @@index([orgId, type])
@@ -324,19 +326,19 @@ enum ContactEntityKind {
 
 // Loyalty (UX-53) · earn + redeem points per Person
 model LoyaltyAccount {
-  id        String   @id @default(cuid())
-  orgId     String
-  contactId String   @unique
+  id         String   @id @default(cuid())
+  orgId      String
+  contactId  String   @unique
   /// Current balance (points, not money) · positive = redeemable
-  balance   Int      @default(0)
+  balance    Int      @default(0)
   /// Lifetime earned · for tier qualification
-  lifetime  Int      @default(0)
+  lifetime   Int      @default(0)
   /// Tier label · BRONZE | SILVER | GOLD | PLATINUM
-  tier      String   @default("BRONZE")
+  tier       String   @default("BRONZE")
   enrolledAt DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  org          Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  org          Organization         @relation(fields: [orgId], references: [id], onDelete: Cascade)
   transactions LoyaltyTransaction[]
 
   @@index([orgId, contactId])
@@ -344,18 +346,18 @@ model LoyaltyAccount {
 }
 
 model LoyaltyTransaction {
-  id        String   @id @default(cuid())
-  accountId String
+  id          String        @id @default(cuid())
+  accountId   String
   /// EARN (positive) or REDEEM (negative) or ADJUST (manual)
-  type      LoyaltyTxType
+  type        LoyaltyTxType
   /// Signed delta · +50 for earn, -100 for redeem
-  points    Int
+  points      Int
   /// What triggered it · "invoice:<id>" or "manual" or "campaign:<id>"
-  source    String?
+  source      String?
   description String?
-  createdAt DateTime @default(now())
+  createdAt   DateTime      @default(now())
 
-  account   LoyaltyAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account LoyaltyAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@index([accountId, createdAt])
 }
@@ -378,9 +380,9 @@ model Warehouse {
   isPrimary Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  org             Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  stockLevels     StockLevel[]
-  stockMovements  StockMovement[]
+  org            Organization    @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  stockLevels    StockLevel[]
+  stockMovements StockMovement[]
 
   @@unique([orgId, code])
   @@index([orgId, isActive])
@@ -388,16 +390,16 @@ model Warehouse {
 
 /// Per-product per-warehouse current stock + WAC cost.
 model StockLevel {
-  id            String   @id @default(cuid())
-  orgId         String
-  productId     String
-  warehouseId   String
-  quantity      Decimal  @default(0) @db.Decimal(18, 4)
+  id          String   @id @default(cuid())
+  orgId       String
+  productId   String
+  warehouseId String
+  quantity    Decimal  @default(0) @db.Decimal(18, 4)
   /// Weighted Average Cost · recomputed on each inbound movement.
-  averageCost   Decimal  @default(0) @db.Decimal(18, 4)
+  averageCost Decimal  @default(0) @db.Decimal(18, 4)
   /// Last cost · used for LIFO valuations.
-  lastCost      Decimal  @default(0) @db.Decimal(18, 4)
-  updatedAt     DateTime @updatedAt
+  lastCost    Decimal  @default(0) @db.Decimal(18, 4)
+  updatedAt   DateTime @updatedAt
 
   org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
@@ -409,21 +411,21 @@ model StockLevel {
 
 /// Append-only stock ledger · drives FIFO/LIFO/WAC math + audit trail.
 model StockMovement {
-  id            String              @id @default(cuid())
-  orgId         String
-  productId     String
-  warehouseId   String
-  type          StockMovementType
+  id          String            @id @default(cuid())
+  orgId       String
+  productId   String
+  warehouseId String
+  type        StockMovementType
   /// Signed delta · positive = inbound, negative = outbound.
-  quantity      Decimal             @db.Decimal(18, 4)
+  quantity    Decimal           @db.Decimal(18, 4)
   /// Per-unit cost at the time of the movement (for inbound) or COGS used (for outbound).
-  unitCost      Decimal             @default(0) @db.Decimal(18, 4)
+  unitCost    Decimal           @default(0) @db.Decimal(18, 4)
   /// Reference doc id (invoice/bill/transfer/manual)
-  refType       String?             // "INVOICE" | "BILL" | "TRANSFER" | "ADJUSTMENT" | "OPENING"
-  refId         String?
-  notes         String?
-  occurredAt    DateTime            @default(now())
-  createdById   String?
+  refType     String? // "INVOICE" | "BILL" | "TRANSFER" | "ADJUSTMENT" | "OPENING"
+  refId       String?
+  notes       String?
+  occurredAt  DateTime          @default(now())
+  createdById String?
 
   org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
@@ -434,12 +436,12 @@ model StockMovement {
 }
 
 enum StockMovementType {
-  RECEIPT     // inbound from supplier (bill)
-  ISSUE       // outbound to customer (invoice)
+  RECEIPT // inbound from supplier (bill)
+  ISSUE // outbound to customer (invoice)
   TRANSFER_IN
   TRANSFER_OUT
-  ADJUSTMENT  // manual count correction
-  OPENING     // opening balance load
+  ADJUSTMENT // manual count correction
+  OPENING // opening balance load
   RETURN_IN
   RETURN_OUT
 }
@@ -449,38 +451,39 @@ enum StockMovementType {
 // ============================================================================
 
 model Invoice {
-  id              String        @id @default(cuid())
-  orgId           String
-  contactId       String
-  invoiceNumber   String
-  status          InvoiceStatus @default(DRAFT)
-  issueDate       DateTime
-  dueDate         DateTime
-  currency        String        @default("SAR")
-  exchangeRate    Decimal       @default(1) @db.Decimal(18, 8)
-  subtotal        Decimal       @default(0) @db.Decimal(18, 4)
-  taxTotal        Decimal       @default(0) @db.Decimal(18, 4)
-  discountTotal   Decimal       @default(0) @db.Decimal(18, 4)
-  total           Decimal       @default(0) @db.Decimal(18, 4)
-  amountPaid      Decimal       @default(0) @db.Decimal(18, 4)
-  notes           String?
-  termsConditions String?
+  id                  String        @id @default(cuid())
+  orgId               String
+  contactId           String
+  invoiceNumber       String
+  status              InvoiceStatus @default(DRAFT)
+  issueDate           DateTime
+  dueDate             DateTime
+  currency            String        @default("SAR")
+  exchangeRate        Decimal       @default(1) @db.Decimal(18, 8)
+  subtotal            Decimal       @default(0) @db.Decimal(18, 4)
+  taxTotal            Decimal       @default(0) @db.Decimal(18, 4)
+  discountTotal       Decimal       @default(0) @db.Decimal(18, 4)
+  total               Decimal       @default(0) @db.Decimal(18, 4)
+  amountPaid          Decimal       @default(0) @db.Decimal(18, 4)
+  notes               String?
+  termsConditions     String?
   // ZATCA Phase 2
-  zatcaUuid       String?       @unique
-  zatcaQr         String?       @db.Text
-  zatcaXml        String?       @db.Text
-  zatcaStatus     String?       // CLEARED | REPORTED | REJECTED | PENDING
+  zatcaUuid           String?       @unique
+  zatcaQr             String?       @db.Text
+  zatcaXml            String?       @db.Text
+  zatcaStatus         String? // CLEARED | REPORTED | REJECTED | PENDING
   // Payment Link (Stripe / PayPal / Moyasar)
   paymentLinkUrl      String?
-  paymentLinkProvider String?   // stripe | paypal | moyasar
+  paymentLinkProvider String? // stripe | paypal | moyasar
   paymentLinkId       String?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
 
-  org       Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  contact   Contact       @relation(fields: [contactId], references: [id])
-  lines     InvoiceLine[]
-  payments  Payment[]
+  org         Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact     Contact       @relation(fields: [contactId], references: [id])
+  lines       InvoiceLine[]
+  payments    Payment[]
+  creditNotes CreditNote[]
 
   @@unique([orgId, invoiceNumber])
   @@index([orgId, status])
@@ -508,9 +511,78 @@ model InvoiceLine {
   taxRateId   String?
   subtotal    Decimal @db.Decimal(18, 4)
 
-  invoice  Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  product  Product? @relation(fields: [productId], references: [id])
-  taxRate  TaxRate? @relation(fields: [taxRateId], references: [id])
+  invoice         Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product         Product?         @relation(fields: [productId], references: [id])
+  taxRate         TaxRate?         @relation(fields: [taxRateId], references: [id])
+  creditNoteLines CreditNoteLine[]
+}
+
+// ============================================================================
+// 4.5 · CREDIT NOTES (sales returns / discounts)
+// ============================================================================
+
+model CreditNote {
+  id                String           @id @default(cuid())
+  orgId             String
+  contactId         String
+  originalInvoiceId String?
+  noteNumber        String
+  status            CreditNoteStatus @default(DRAFT)
+  reason            CreditNoteReason @default(RETURN)
+  issueDate         DateTime
+  currency          String           @default("SAR")
+  exchangeRate      Decimal          @default(1) @db.Decimal(18, 8)
+  subtotal          Decimal          @default(0) @db.Decimal(18, 4)
+  taxTotal          Decimal          @default(0) @db.Decimal(18, 4)
+  total             Decimal          @default(0) @db.Decimal(18, 4)
+  notes             String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact         Contact          @relation(fields: [contactId], references: [id])
+  originalInvoice Invoice?         @relation(fields: [originalInvoiceId], references: [id])
+  lines           CreditNoteLine[]
+
+  @@unique([orgId, noteNumber])
+  @@index([orgId, status])
+  @@index([orgId, contactId])
+  @@index([orgId, originalInvoiceId])
+}
+
+enum CreditNoteStatus {
+  DRAFT
+  ISSUED
+  APPLIED
+  CANCELLED
+}
+
+enum CreditNoteReason {
+  RETURN
+  DISCOUNT
+  PRICING_ERROR
+  QUALITY_ISSUE
+  OTHER
+}
+
+model CreditNoteLine {
+  id                    String  @id @default(cuid())
+  creditNoteId          String
+  originalInvoiceLineId String?
+  productId             String?
+  description           String
+  quantity              Decimal @db.Decimal(18, 4)
+  unitPrice             Decimal @db.Decimal(18, 4)
+  taxRateId             String?
+  subtotal              Decimal @db.Decimal(18, 4)
+
+  creditNote          CreditNote   @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  originalInvoiceLine InvoiceLine? @relation(fields: [originalInvoiceLineId], references: [id])
+  product             Product?     @relation(fields: [productId], references: [id])
+  taxRate             TaxRate?     @relation(fields: [taxRateId], references: [id])
+
+  @@index([creditNoteId])
+  @@index([productId])
 }
 
 // ============================================================================
@@ -563,9 +635,9 @@ model BillLine {
   taxRateId   String?
   subtotal    Decimal @db.Decimal(18, 4)
 
-  bill     Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
-  product  Product? @relation(fields: [productId], references: [id])
-  taxRate  TaxRate? @relation(fields: [taxRateId], references: [id])
+  bill    Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+  product Product? @relation(fields: [productId], references: [id])
+  taxRate TaxRate? @relation(fields: [taxRateId], references: [id])
 }
 
 // ============================================================================
@@ -605,33 +677,34 @@ enum PaymentMethod {
 // ============================================================================
 
 model Product {
-  id          String      @id @default(cuid())
-  orgId       String
-  sku         String?
-  name        String
-  nameAr      String?
-  description String?
-  type        ProductType @default(SERVICE)
+  id               String      @id @default(cuid())
+  orgId            String
+  sku              String?
+  name             String
+  nameAr           String?
+  description      String?
+  type             ProductType @default(SERVICE)
   /// Category code · auto-derived from SKU prefix or set manually (e.g. "ADV", "AI", "BRD", "CLD")
-  category    String?
+  category         String?
   /// Subscription billing cycle (only relevant for SUBSCRIPTION type)
-  billingCycle String?    // ONE_TIME | MONTHLY | QUARTERLY | ANNUAL
-  unitPrice   Decimal     @default(0) @db.Decimal(18, 4)
-  costPrice   Decimal     @default(0) @db.Decimal(18, 4)
-  stockQty    Decimal     @default(0) @db.Decimal(18, 4)
-  reorderQty  Decimal?    @db.Decimal(18, 4)
-  taxRateId   String?
+  billingCycle     String? // ONE_TIME | MONTHLY | QUARTERLY | ANNUAL
+  unitPrice        Decimal     @default(0) @db.Decimal(18, 4)
+  costPrice        Decimal     @default(0) @db.Decimal(18, 4)
+  stockQty         Decimal     @default(0) @db.Decimal(18, 4)
+  reorderQty       Decimal?    @db.Decimal(18, 4)
+  taxRateId        String?
   incomeAccountId  String?
   expenseAccountId String?
-  isActive    Boolean     @default(true)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  isActive         Boolean     @default(true)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
-  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  taxRate      TaxRate?      @relation(fields: [taxRateId], references: [id])
-  invoiceLines InvoiceLine[]
-  billLines    BillLine[]
-  quoteLines   QuoteLine[]
+  org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  taxRate         TaxRate?         @relation(fields: [taxRateId], references: [id])
+  invoiceLines    InvoiceLine[]
+  creditNoteLines CreditNoteLine[]
+  billLines       BillLine[]
+  quoteLines      QuoteLine[]
 
   @@unique([orgId, sku])
   @@index([orgId])
@@ -654,18 +727,19 @@ enum ProductType {
 model TaxRate {
   id        String   @id @default(cuid())
   orgId     String
-  name      String   // "VAT 15%" · "VAT Exempt" · "VAT 0%"
+  name      String // "VAT 15%" · "VAT Exempt" · "VAT 0%"
   rate      Decimal  @db.Decimal(8, 4) // percentage as decimal · 0.15 for 15%
   type      String   @default("STANDARD") // STANDARD | EXEMPT | ZERO_RATED
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  org          Organization  @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  invoiceLines InvoiceLine[]
-  billLines    BillLine[]
-  products     Product[]
-  expenses     Expense[]
-  quoteLines   QuoteLine[]
+  org             Organization     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  invoiceLines    InvoiceLine[]
+  creditNoteLines CreditNoteLine[]
+  billLines       BillLine[]
+  products        Product[]
+  expenses        Expense[]
+  quoteLines      QuoteLine[]
 
   @@index([orgId])
 }
@@ -675,21 +749,21 @@ model TaxRate {
 // ============================================================================
 
 model BankAccount {
-  id             String   @id @default(cuid())
-  orgId          String
-  accountId      String?  // links to Account in chart of accounts
-  name           String
-  bankName       String?
-  country        String?  // SA · US · AE · ... (drives which fields are required)
-  accountNumber  String?
-  iban           String?  // KSA · EU · UK · UAE
-  swiftCode      String?  // BIC · 8-11 chars · international wires
-  routingNumber  String?  // US ABA routing · 9 digits
-  currency       String   @default("SAR")
-  balance        Decimal  @default(0) @db.Decimal(18, 4)
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id            String   @id @default(cuid())
+  orgId         String
+  accountId     String? // links to Account in chart of accounts
+  name          String
+  bankName      String?
+  country       String? // SA · US · AE · ... (drives which fields are required)
+  accountNumber String?
+  iban          String? // KSA · EU · UK · UAE
+  swiftCode     String? // BIC · 8-11 chars · international wires
+  routingNumber String? // US ABA routing · 9 digits
+  currency      String   @default("SAR")
+  balance       Decimal  @default(0) @db.Decimal(18, 4)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   payments Payment[]
@@ -701,17 +775,17 @@ model BankAccount {
 // ============================================================================
 
 model JournalEntry {
-  id           String   @id @default(cuid())
-  orgId        String
-  entryNumber  String
-  date         DateTime
-  description  String
-  reference    String?  // links to invoice/bill/payment
-  source       String?  // "manual" | "invoice" | "bill" | "payment" | "system"
-  isPosted     Boolean  @default(false)
-  postedAt     DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id          String    @id @default(cuid())
+  orgId       String
+  entryNumber String
+  date        DateTime
+  description String
+  reference   String? // links to invoice/bill/payment
+  source      String? // "manual" | "invoice" | "bill" | "payment" | "system"
+  isPosted    Boolean   @default(false)
+  postedAt    DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   org         Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
   lines       JournalLine[]
@@ -722,12 +796,12 @@ model JournalEntry {
 }
 
 model JournalLine {
-  id          String   @id @default(cuid())
+  id          String  @id @default(cuid())
   journalId   String
   accountId   String
   description String?
-  debit       Decimal  @default(0) @db.Decimal(18, 4)
-  credit      Decimal  @default(0) @db.Decimal(18, 4)
+  debit       Decimal @default(0) @db.Decimal(18, 4)
+  credit      Decimal @default(0) @db.Decimal(18, 4)
 
   journal JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
   account Account      @relation(fields: [accountId], references: [id])
@@ -742,8 +816,8 @@ model JournalAttachment {
   filename    String
   contentType String
   sizeBytes   Int
-  url         String   // R2/data: URL
-  uploadedBy  String?  // userId
+  url         String // R2/data: URL
+  uploadedBy  String? // userId
   createdAt   DateTime @default(now())
 
   journal JournalEntry @relation(fields: [journalId], references: [id], onDelete: Cascade)
@@ -753,14 +827,14 @@ model JournalAttachment {
 
 // ── Currency rates · daily cached FX from ECB / OpenExchangeRates ─────────
 model CurrencyRate {
-  id          String   @id @default(cuid())
-  orgId       String?  // null = global · org override otherwise
-  fromCurrency String  // SAR, USD, EUR, ...
-  toCurrency  String   // base currency typically
-  rate        Decimal  @db.Decimal(20, 10)
-  date        DateTime // for which day this rate applies
-  source      String   @default("manual") // manual | ecb | oxr | system
-  createdAt   DateTime @default(now())
+  id           String   @id @default(cuid())
+  orgId        String? // null = global · org override otherwise
+  fromCurrency String // SAR, USD, EUR, ...
+  toCurrency   String // base currency typically
+  rate         Decimal  @db.Decimal(20, 10)
+  date         DateTime // for which day this rate applies
+  source       String   @default("manual") // manual | ecb | oxr | system
+  createdAt    DateTime @default(now())
 
   @@unique([orgId, fromCurrency, toCurrency, date])
   @@index([fromCurrency, toCurrency, date])
@@ -768,24 +842,24 @@ model CurrencyRate {
 
 // ── Fiscal periods · monthly/yearly close + lock ──────────────────────────
 model FiscalPeriod {
-  id            String    @id @default(cuid())
-  orgId         String
-  fiscalYear    Int       // 2026
-  periodNumber  Int       // 1-12 for months, 0 = full year roll-up
-  startDate     DateTime
-  endDate       DateTime
-  status        String    @default("OPEN") // OPEN | LOCKED | CLOSED
-  lockedAt      DateTime?
-  closedAt      DateTime?
-  closedBy      String?   // userId
+  id               String    @id @default(cuid())
+  orgId            String
+  fiscalYear       Int // 2026
+  periodNumber     Int // 1-12 for months, 0 = full year roll-up
+  startDate        DateTime
+  endDate          DateTime
+  status           String    @default("OPEN") // OPEN | LOCKED | CLOSED
+  lockedAt         DateTime?
+  closedAt         DateTime?
+  closedBy         String? // userId
   // Roll-forward retained earnings totals snapshot at close
   retainedEarnings Decimal?  @db.Decimal(20, 4)
   totalRevenue     Decimal?  @db.Decimal(20, 4)
   totalExpense     Decimal?  @db.Decimal(20, 4)
   netIncome        Decimal?  @db.Decimal(20, 4)
-  notes         String?
+  notes            String?
 
-  org           Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@unique([orgId, fiscalYear, periodNumber])
   @@index([orgId, status])
@@ -822,14 +896,14 @@ model CostCenter {
 }
 
 model Project {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   orgId     String
   code      String
   name      String
   startDate DateTime?
   endDate   DateTime?
-  status    String   @default("ACTIVE") // ACTIVE | ON_HOLD | COMPLETED | CANCELLED
-  createdAt DateTime @default(now())
+  status    String    @default("ACTIVE") // ACTIVE | ON_HOLD | COMPLETED | CANCELLED
+  createdAt DateTime  @default(now())
 
   org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   vouchers Voucher[]
@@ -842,24 +916,24 @@ model Project {
 // ============================================================================
 
 model Quote {
-  id              String      @id @default(cuid())
-  orgId           String
-  contactId       String
-  quoteNumber     String
-  status          QuoteStatus @default(DRAFT)
-  issueDate       DateTime
-  validUntil      DateTime
-  currency        String      @default("SAR")
-  exchangeRate    Decimal     @default(1) @db.Decimal(18, 8)
-  subtotal        Decimal     @default(0) @db.Decimal(18, 4)
-  taxTotal        Decimal     @default(0) @db.Decimal(18, 4)
-  discountTotal   Decimal     @default(0) @db.Decimal(18, 4)
-  total           Decimal     @default(0) @db.Decimal(18, 4)
-  notes           String?
-  termsConditions String?
-  convertedInvoiceId String?  @unique
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
+  id                 String      @id @default(cuid())
+  orgId              String
+  contactId          String
+  quoteNumber        String
+  status             QuoteStatus @default(DRAFT)
+  issueDate          DateTime
+  validUntil         DateTime
+  currency           String      @default("SAR")
+  exchangeRate       Decimal     @default(1) @db.Decimal(18, 8)
+  subtotal           Decimal     @default(0) @db.Decimal(18, 4)
+  taxTotal           Decimal     @default(0) @db.Decimal(18, 4)
+  discountTotal      Decimal     @default(0) @db.Decimal(18, 4)
+  total              Decimal     @default(0) @db.Decimal(18, 4)
+  notes              String?
+  termsConditions    String?
+  convertedInvoiceId String?     @unique
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
 
   org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   contact Contact      @relation(fields: [contactId], references: [id])
@@ -905,14 +979,14 @@ model Voucher {
   type          VoucherType
   number        String
   date          DateTime
-  contactId     String?       // customer for RECEIPT · supplier for PAYMENT
+  contactId     String? // customer for RECEIPT · supplier for PAYMENT
   amount        Decimal       @db.Decimal(18, 4)
   currency      String        @default("SAR")
   paymentMethod PaymentMethod
-  reference     String?       // bank ref / check #
+  reference     String? // bank ref / check #
   notes         String?
-  invoiceId     String?       // optional · auto-update invoice.amountPaid
-  billId        String?       // optional · auto-update bill.amountPaid
+  invoiceId     String? // optional · auto-update invoice.amountPaid
+  billId        String? // optional · auto-update bill.amountPaid
   /// Bank account (for non-cash methods) · UX-45 enrichment
   bankAccountId String?
   /// Mark as advance payment · not linked to a specific invoice yet (UX-45)
@@ -925,11 +999,11 @@ model Voucher {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  org         Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  contact     Contact?     @relation(fields: [contactId], references: [id])
-  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
-  project     Project?     @relation(fields: [projectId], references: [id])
-  costCenter  CostCenter?  @relation(fields: [costCenterId], references: [id])
+  org         Organization        @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact     Contact?            @relation(fields: [contactId], references: [id])
+  bankAccount BankAccount?        @relation(fields: [bankAccountId], references: [id])
+  project     Project?            @relation(fields: [projectId], references: [id])
+  costCenter  CostCenter?         @relation(fields: [costCenterId], references: [id])
   attachments VoucherAttachment[]
 
   @@unique([orgId, number])
@@ -954,8 +1028,8 @@ model VoucherAttachment {
 }
 
 enum VoucherType {
-  RECEIPT  // سند قبض · cash IN from customer
-  PAYMENT  // سند صرف · cash OUT to supplier
+  RECEIPT // سند قبض · cash IN from customer
+  PAYMENT // سند صرف · cash OUT to supplier
 }
 
 // ============================================================================
@@ -963,27 +1037,27 @@ enum VoucherType {
 // ============================================================================
 
 model Expense {
-  id             String        @id @default(cuid())
-  orgId          String
-  number         String
-  date           DateTime
-  category       String        // Rent · Utilities · Salaries · Supplies · Travel · Other · ...
-  description    String?
-  amount         Decimal       @db.Decimal(18, 4)
-  currency       String        @default("SAR")
-  paymentMethod  PaymentMethod
-  vendorName     String?       // free-text · or link to a Contact later
-  reference      String?       // bank reference / receipt #
-  taxRateId      String?
-  taxAmount      Decimal       @default(0) @db.Decimal(18, 4)
-  total          Decimal       @db.Decimal(18, 4)
-  receiptUrl     String?       // R2 / S3 url of scanned receipt
-  notes          String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id            String        @id @default(cuid())
+  orgId         String
+  number        String
+  date          DateTime
+  category      String // Rent · Utilities · Salaries · Supplies · Travel · Other · ...
+  description   String?
+  amount        Decimal       @db.Decimal(18, 4)
+  currency      String        @default("SAR")
+  paymentMethod PaymentMethod
+  vendorName    String? // free-text · or link to a Contact later
+  reference     String? // bank reference / receipt #
+  taxRateId     String?
+  taxAmount     Decimal       @default(0) @db.Decimal(18, 4)
+  total         Decimal       @db.Decimal(18, 4)
+  receiptUrl    String? // R2 / S3 url of scanned receipt
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  taxRate  TaxRate?     @relation(fields: [taxRateId], references: [id])
+  org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  taxRate TaxRate?     @relation(fields: [taxRateId], references: [id])
 
   @@unique([orgId, number])
   @@index([orgId, date])
@@ -994,19 +1068,19 @@ model Expense {
 // ============================================================================
 
 model FixedAsset {
-  id              String   @id @default(cuid())
-  orgId           String
-  code            String
-  name            String
-  category        String?
-  acquisitionDate DateTime
-  acquisitionCost Decimal  @db.Decimal(18, 4)
-  salvageValue    Decimal  @default(0) @db.Decimal(18, 4)
-  usefulLifeYears Int
-  depreciationMethod String @default("STRAIGHT_LINE") // STRAIGHT_LINE | DECLINING_BALANCE
-  status          String   @default("ACTIVE") // ACTIVE | DISPOSED | WRITTEN_OFF
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id                 String   @id @default(cuid())
+  orgId              String
+  code               String
+  name               String
+  category           String?
+  acquisitionDate    DateTime
+  acquisitionCost    Decimal  @db.Decimal(18, 4)
+  salvageValue       Decimal  @default(0) @db.Decimal(18, 4)
+  usefulLifeYears    Int
+  depreciationMethod String   @default("STRAIGHT_LINE") // STRAIGHT_LINE | DECLINING_BALANCE
+  status             String   @default("ACTIVE") // ACTIVE | DISPOSED | WRITTEN_OFF
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
@@ -1018,17 +1092,17 @@ model FixedAsset {
 // ============================================================================
 
 model Notification {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   orgId     String
-  userId    String?  // null = visible to all org members; otherwise targeted
-  type      String   // INVOICE_PAID | QUOTE_ACCEPTED | QUOTE_SIGNED | INVOICE_OVERDUE | EXPENSE_CREATED | OCR_LOW_CONFIDENCE | SIGN_REQUESTED | SIGN_COMPLETED | SYSTEM
+  userId    String? // null = visible to all org members; otherwise targeted
+  type      String // INVOICE_PAID | QUOTE_ACCEPTED | QUOTE_SIGNED | INVOICE_OVERDUE | EXPENSE_CREATED | OCR_LOW_CONFIDENCE | SIGN_REQUESTED | SIGN_COMPLETED | SYSTEM
   title     String
-  body      String?  @db.Text
-  link      String?  // in-app deep link · e.g. /app/invoices/abc123
-  refType   String?  // INVOICE | QUOTE | VOUCHER | EXPENSE | BILL | SIGNATURE
+  body      String?   @db.Text
+  link      String? // in-app deep link · e.g. /app/invoices/abc123
+  refType   String? // INVOICE | QUOTE | VOUCHER | EXPENSE | BILL | SIGNATURE
   refId     String?
   readAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
@@ -1037,26 +1111,26 @@ model Notification {
 }
 
 // ============================================================================
-// 11.11 · SIGNATURE REQUESTS (DocuSeal at sign.fc.sa integration)
+// 11.11 · SIGNATURE REQUESTS (DocuSeal at sign.ensidex.com integration)
 // ============================================================================
 
 model SignatureRequest {
-  id                    String   @id @default(cuid())
-  orgId                 String
-  docType               String   // QUOTE | INVOICE | CONTRACT
-  docId                 String   // FK to Quote.id / Invoice.id (loose ref, validated at app layer)
-  docNumber             String   // human-friendly (Q-2026-001 / INV-2026-042)
-  status                String   @default("PENDING") // PENDING | SENT | VIEWED | SIGNED | DECLINED | EXPIRED
-  docusealSubmissionId  String?  @unique
-  docusealEmbedUrl      String?  @db.Text
-  signers               String   @db.Text // JSON array: [{name, email, role, status, signedAt}]
-  signedPdfUrl          String?  @db.Text
-  auditTrailUrl         String?  @db.Text
-  sentAt                DateTime?
-  signedAt              DateTime?
-  expiresAt             DateTime?
-  createdAt             DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  id                   String    @id @default(cuid())
+  orgId                String
+  docType              String // QUOTE | INVOICE | CONTRACT
+  docId                String // FK to Quote.id / Invoice.id (loose ref, validated at app layer)
+  docNumber            String // human-friendly (Q-2026-001 / INV-2026-042)
+  status               String    @default("PENDING") // PENDING | SENT | VIEWED | SIGNED | DECLINED | EXPIRED
+  docusealSubmissionId String?   @unique
+  docusealEmbedUrl     String?   @db.Text
+  signers              String    @db.Text // JSON array: [{name, email, role, status, signedAt}]
+  signedPdfUrl         String?   @db.Text
+  auditTrailUrl        String?   @db.Text
+  sentAt               DateTime?
+  signedAt             DateTime?
+  expiresAt            DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
@@ -1069,11 +1143,11 @@ model SignatureRequest {
 // ============================================================================
 
 enum AiKeyMode {
-  BYOK            // org provides own OpenRouter/Anthropic key · we charge $0 for AI
-  HOSTED_FREE     // entix key · $5/month allocation · free tier
-  HOSTED_PRO      // entix key · $30/month included · $19 subscription
+  BYOK // org provides own OpenRouter/Anthropic key · we charge $0 for AI
+  HOSTED_FREE // entix key · $5/month allocation · free tier
+  HOSTED_PRO // entix key · $30/month included · $19 subscription
   HOSTED_BUSINESS // entix key · $100/month included · $49 subscription
-  PAYG            // entix key · pay-as-you-go · $1.20 per $1 of AI cost
+  PAYG // entix key · pay-as-you-go · $1.20 per $1 of AI cost
 }
 
 model AiBilling {
@@ -1081,12 +1155,12 @@ model AiBilling {
   orgId             String    @unique
   mode              AiKeyMode @default(HOSTED_FREE)
   // BYOK · encrypted at rest (AES-256-GCM with KMS-managed key)
-  byokProvider      String?   // "openrouter" | "anthropic"
+  byokProvider      String? // "openrouter" | "anthropic"
   byokKeyEncrypted  String?   @db.Text
-  byokKeyHint       String?   // last 4 chars of key for UI display (sk-...XXXX)
+  byokKeyHint       String? // last 4 chars of key for UI display (sk-...XXXX)
   // Hosted billing
-  monthlyAllocation Decimal   @default(5) @db.Decimal(10, 2)  // USD limit
-  creditBalance     Decimal   @default(0) @db.Decimal(10, 2)  // top-ups remaining
+  monthlyAllocation Decimal   @default(5) @db.Decimal(10, 2) // USD limit
+  creditBalance     Decimal   @default(0) @db.Decimal(10, 2) // top-ups remaining
   spentThisPeriod   Decimal   @default(0) @db.Decimal(10, 2)
   periodResetAt     DateTime  @default(now())
   alertedAt80       Boolean   @default(false)
@@ -1097,7 +1171,7 @@ model AiBilling {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  org               Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
 
   @@index([mode, periodResetAt])
 }
@@ -1106,10 +1180,10 @@ model AiUsageLog {
   id               String   @id @default(cuid())
   orgId            String
   userId           String?
-  endpoint         String   // /api/agent/chat | /api/ocr/extract | /api/ocr/extract-batch
-  model            String   // anthropic/claude-sonnet-4.6
-  provider         String   // openrouter | anthropic
-  source           String   // BYOK | HOSTED
+  endpoint         String // /api/agent/chat | /api/ocr/extract | /api/ocr/extract-batch
+  model            String // anthropic/claude-sonnet-4.6
+  provider         String // openrouter | anthropic
+  source           String // BYOK | HOSTED
   promptTokens     Int      @default(0)
   completionTokens Int      @default(0)
   costUsd          Decimal  @db.Decimal(10, 6)
@@ -1126,25 +1200,25 @@ model AiUsageLog {
 // ── Email inbox · UX-81 ──────────────────────────────────────────────────────
 // Inbound emails forwarded by SMTP-to-HTTP provider · auto-extract → DRAFT bills
 model InboxMessage {
-  id                 String   @id @default(cuid())
-  orgId              String
-  fromAddress        String
-  toAddress          String
-  subject            String   @default("")
-  bodyText           String   @db.Text @default("")
-  bodyHtml           String   @db.Text @default("")
-  messageId          String?
-  status             InboxStatus @default(RECEIVED)
-  attachmentCount    Int      @default(0)
+  id                String      @id @default(cuid())
+  orgId             String
+  fromAddress       String
+  toAddress         String
+  subject           String      @default("")
+  bodyText          String      @default("") @db.Text
+  bodyHtml          String      @default("") @db.Text
+  messageId         String?
+  status            InboxStatus @default(RECEIVED)
+  attachmentCount   Int         @default(0)
   // AI extraction output
-  extractedJson      Json?
-  extractedKind      String?
-  extractedTotal     Decimal? @db.Decimal(15, 2)
-  extractedCurrency  String?
+  extractedJson     Json?
+  extractedKind     String?
+  extractedTotal    Decimal?    @db.Decimal(15, 2)
+  extractedCurrency String?
   // Approval link
-  billId             String?
-  processedAt        DateTime?
-  createdAt          DateTime @default(now())
+  billId            String?
+  processedAt       DateTime?
+  createdAt         DateTime    @default(now())
 
   org         Organization      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   attachments InboxAttachment[]
@@ -1168,9 +1242,9 @@ model InboxAttachment {
 }
 
 enum InboxStatus {
-  RECEIVED       // just arrived · not yet processed
-  EXTRACTED      // AI ran · waiting for user approval
-  APPROVED       // user accepted · bill created
-  REJECTED       // user dismissed
-  ERROR          // extraction failed
+  RECEIVED // just arrived · not yet processed
+  EXTRACTED // AI ran · waiting for user approval
+  APPROVED // user accepted · bill created
+  REJECTED // user dismissed
+  ERROR // extraction failed
 }

@@ -13,6 +13,7 @@ import { contactsRoutes } from './routes/contacts.js'
 import { orgsRoutes } from './routes/orgs.js'
 import { adminResetRoutes } from './routes/admin-reset.js'
 import { invoicesRoutes } from './routes/invoices.js'
+import { creditNotesRoutes } from './routes/credit-notes.js'
 import { accountsRoutes } from './routes/accounts.js'
 import { meRoutes } from './routes/me.js'
 import { expensesRoutes } from './routes/expenses.js'
@@ -59,6 +60,7 @@ app.use(
         'https://www.entix.io',
         'http://localhost:3001',
         'http://localhost:5173',
+        'http://127.0.0.1:5173',
       ]
       return allowed.includes(origin || '') ? origin || '*' : ''
     },
@@ -109,6 +111,7 @@ orgScoped.use('*', requireAuth)
 orgScoped.use('*', requireOrg)
 orgScoped.route('/contacts', contactsRoutes)
 orgScoped.route('/invoices', invoicesRoutes)
+orgScoped.route('/credit-notes', creditNotesRoutes)
 orgScoped.route('/accounts', accountsRoutes)
 orgScoped.route('/expenses', expensesRoutes)
 orgScoped.route('/quotes', quotesRoutes)

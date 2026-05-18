@@ -6,7 +6,7 @@ Backend API for [entix.io](https://entix.io) · Hono + Prisma + PostgreSQL · Ty
 
 - **Runtime:** Node 22 · Hono 4
 - **DB:** PostgreSQL 16 · Prisma 5
-- **Auth:** Logto JWT verification (jose) · DEMO mode when LOGTO_ENDPOINT is unset
+- **Auth:** better-auth email/password + cookie sessions stored in PostgreSQL
 - **Validation:** Zod via @hono/zod-validator
 - **Deploy:** Docker → Coolify on `api.entix.io`
 
@@ -28,14 +28,14 @@ Backend API for [entix.io](https://entix.io) · Hono + Prisma + PostgreSQL · Ty
 | GET/POST/PATCH/DEL | `/api/accounts` | ✅✅ | chart of accounts CRUD |
 | GET/POST/PATCH/DEL | `/api/invoices` | ✅✅ | sales invoices · auto-numbers · auto-totals |
 
-✅ = requires Bearer JWT
-✅✅ = requires Bearer JWT + `X-Org-Id` header
+✅ = requires a better-auth session cookie
+✅✅ = requires a better-auth session cookie + `X-Org-Id` header
 
 ## Local dev
 
 ```bash
 cp .env.example .env
-# fill DATABASE_URL · leave LOGTO_* empty for demo mode
+# fill DATABASE_URL, BETTER_AUTH_SECRET, BETTER_AUTH_URL, FRONTEND_URL
 npm install
 npx prisma migrate dev
 npm run dev
@@ -45,11 +45,13 @@ npm run dev
 
 Coolify builds from `Dockerfile` · runs `prisma migrate deploy` on container start · serves on port 3000.
 
-## DEMO mode
+## Auth and database
 
-If `LOGTO_ENDPOINT` is empty:
-- All requests bypass JWT verification
-- A `demo@entix.io` user is auto-created on first request
-- This is for V0.1 only · production WILL require Logto
+No external identity provider is required. Users, sessions, accounts, and verification tokens are stored in PostgreSQL through Prisma models:
 
-When you set `LOGTO_ENDPOINT`, demo mode is automatically off.
+- `User`
+- `AuthSession`
+- `AuthAccount`
+- `Verification`
+
+The frontend sends `credentials: "include"` and the API validates the server-side session cookie.

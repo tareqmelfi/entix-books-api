@@ -1,7 +1,7 @@
 /**
  * Trading brokers integration · UX-79
  *
- * Per طارق · "افتح محفظة تداول واربطها مع بروكر · انتراكتف بروكرز · تريدستيشن"
+ * Product requirement: "افتح محفظة تداول واربطها مع بروكر · انتراكتف بروكرز · تريدستيشن"
  *
  * Supported:
  *   - Interactive Brokers (IBKR) Flex Web Service · token + query ID → daily statement XML

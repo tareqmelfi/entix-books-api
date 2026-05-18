@@ -108,11 +108,11 @@ oauthRoutes.get('/stripe/start', async (c) => {
   // Pre-fill what we know about the merchant to speed up onboarding
   const org = await prisma.organization.findUnique({
     where: { id: orgId },
-    select: { name: true, country: true, currency: true, email: true },
+    select: { name: true, country: true, baseCurrency: true, email: true },
   })
   if (org?.email) params.set('stripe_user[email]', org.email)
   if (org?.country) params.set('stripe_user[country]', org.country)
-  if (org?.currency) params.set('stripe_user[currency]', org.currency.toLowerCase())
+  if (org?.baseCurrency) params.set('stripe_user[currency]', org.baseCurrency.toLowerCase())
   if (org?.name) params.set('stripe_user[business_name]', org.name)
 
   return c.redirect(`https://connect.stripe.com/oauth/authorize?${params}`, 302)

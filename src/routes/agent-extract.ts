@@ -236,7 +236,7 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
         await logAiUsage({
           orgId, userId: auth?.userId,
           endpoint: '/api/agent/extract-document', model: 'paddle-ocr-fallback',
-          source: 'fallback', provider: 'paddle',
+          source: 'HOSTED', provider: 'paddle',
           promptTokens: 0, completionTokens: 0, costUsd: 0, successful: true,
         })
         return c.json({
