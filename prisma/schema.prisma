@@ -309,6 +309,7 @@ model Contact {
   quotes            Quote[]
   creditNotes       CreditNote[]
   vouchers          Voucher[]
+  expenses          Expense[]
   employeeContracts EmployeeContract[]
   payrollLines      PayrollLine[]
   supplierCredits   SupplierCredit[]
@@ -1119,6 +1120,7 @@ enum VoucherType {
 model Expense {
   id            String        @id @default(cuid())
   orgId         String
+  contactId     String?
   number        String
   date          DateTime
   category      String // Rent · Utilities · Salaries · Supplies · Travel · Other · ...
@@ -1127,20 +1129,35 @@ model Expense {
   currency      String        @default("SAR")
   paymentMethod PaymentMethod
   vendorName    String? // free-text · or link to a Contact later
+  documentNumber String? // supplier receipt / invoice number
   reference     String? // bank reference / receipt #
   taxRateId     String?
   taxAmount     Decimal       @default(0) @db.Decimal(18, 4)
+  subtotal      Decimal       @default(0) @db.Decimal(18, 4)
   total         Decimal       @db.Decimal(18, 4)
   receiptUrl    String? // R2 / S3 url of scanned receipt
+  attachmentName String?
+  attachmentType String?
+  attachmentSizeBytes Int?
+  attachmentBase64 String? @db.Text
+  attachmentCount Int @default(0)
+  lineItems     Json?
+  extractedJson Json?
+  ocrConfidence Decimal? @db.Decimal(5, 4)
+  duplicateOfId String?
+  duplicateReason String?
   notes         String?
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
   org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  contact Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
   taxRate TaxRate?     @relation(fields: [taxRateId], references: [id])
 
   @@unique([orgId, number])
   @@index([orgId, date])
+  @@index([orgId, contactId])
+  @@index([orgId, documentNumber])
 }
 
 // ============================================================================
