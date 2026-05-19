@@ -104,6 +104,9 @@ Output strict JSON · no markdown · no commentary. Schema:
       "taxRate": 0.15,
       "taxInclusive": false,
       "lineTotal": 0.00,
+      "category": "Groceries | Meals | Utilities | Fuel | Office | Software | Other",
+      "accountName": "suggested accounting account name",
+      "sku": "...",
       "notes": null
     }
   ],
@@ -113,6 +116,15 @@ Output strict JSON · no markdown · no commentary. Schema:
     "tax": 0.00,
     "total": 0.00
   },
+  "payments": [
+    {
+      "method": "CASH" | "CARD" | "MADA" | "BANK_TRANSFER" | "STC_PAY" | "CHECK" | "OTHER",
+      "amount": 0.00,
+      "reference": "...",
+      "cardLast4": "...",
+      "accountName": "cash drawer | bank/card account"
+    }
+  ],
   "paymentTerms": "...",
   "notes": "...",
   "warnings": ["..."]
@@ -122,6 +134,9 @@ Rules:
 - Normalize Arabic-Indic digits (٠-٩) to Western (0-9).
 - If you can't read the document at all, set kind="unknown" and confidence=0.
 - For quotes/invoices: every line must have a description.
+- For receipts: split every visible item/receipt row into lines. Do not collapse distinct products into one line if prices are visible.
+- Suggest category/accountName per line when it is obvious (groceries, meals, office, software, fuel, utilities).
+- Extract payment methods separately. If total is paid by both cash and card, return multiple payments whose sum equals total.
 - VAT rate in KSA is 15% by default. If the document shows a different rate, use that.
 - If "taxInclusive" cannot be determined, default to false (exclusive · price + tax).
 - Dates in DD/MM/YYYY → convert to YYYY-MM-DD.

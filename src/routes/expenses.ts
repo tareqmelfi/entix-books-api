@@ -15,6 +15,18 @@ const expenseLineSchema = z.object({
   taxInclusive: z.boolean().optional().nullable(),
   lineTotal: z.coerce.number().min(0).optional().nullable(),
   subtotal: z.coerce.number().min(0).optional().nullable(),
+  category: z.string().optional().nullable(),
+  accountName: z.string().optional().nullable(),
+  sku: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+}).passthrough()
+
+const expensePaymentSplitSchema = z.object({
+  method: z.enum(['CASH', 'BANK_TRANSFER', 'CARD', 'STC_PAY', 'MADA', 'CHECK', 'OTHER']),
+  amount: z.coerce.number().positive(),
+  reference: z.string().optional().nullable(),
+  cardLast4: z.string().optional().nullable(),
+  accountName: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
 }).passthrough()
 
@@ -42,6 +54,7 @@ const expenseSchema = z.object({
   attachmentBase64: z.string().max(80_000_000).optional().nullable(),
   attachmentCount: z.coerce.number().int().nonnegative().optional(),
   lineItems: z.array(expenseLineSchema).optional().nullable(),
+  paymentSplits: z.array(expensePaymentSplitSchema).optional().nullable(),
   extractedJson: z.any().optional().nullable(),
   ocrConfidence: z.coerce.number().min(0).max(1).optional().nullable(),
   autoCreateSupplier: z.boolean().default(true),
@@ -69,6 +82,16 @@ function normalizeTaxId(value?: string | null): string | null {
   const trimmed = cleanOptionalText(value)
   if (!trimmed) return null
   return trimmed.replace(/[^\dA-Za-z]/g, '')
+}
+
+function normalizeVendorName(value?: string | null): string | null {
+  const trimmed = cleanOptionalText(value)
+  if (!trimmed) return null
+  return trimmed
+    .replace(/\s+/g, ' ')
+    .replace(/\s+-\s+/g, ' · ')
+    .replace(/^(store|branch|cashier|supplier)\s*[:#-]?\s*/i, '')
+    .trim()
 }
 
 async function resolveTaxRateId(orgId: string, taxRateId?: string | null, taxAmount = 0): Promise<string | null> {
@@ -103,7 +126,7 @@ async function resolveExpenseContact(
     return { id: contact.id, displayName: contact.displayName }
   }
 
-  const vendorName = cleanOptionalText(data.vendorName)
+  const vendorName = normalizeVendorName(data.vendorName)
   if (!vendorName) return null
 
   const supplierTaxId = normalizeTaxId(data.supplierTaxId || (data.extractedJson as any)?.issuer?.taxId)
@@ -231,6 +254,7 @@ const expenseListSelect = {
   attachmentType: true,
   attachmentSizeBytes: true,
   attachmentCount: true,
+  paymentSplits: true,
   duplicateOfId: true,
   duplicateReason: true,
   notes: true,
@@ -327,7 +351,7 @@ expensesRoutes.post('/', zValidator('json', expenseSchema), async (c) => {
         subtotal: new Prisma.Decimal(amount),
         currency: data.currency,
         paymentMethod: data.paymentMethod,
-        vendorName: contact?.displayName || data.vendorName,
+        vendorName: contact?.displayName || normalizeVendorName(data.vendorName),
         documentNumber: data.documentNumber,
         reference: data.reference,
         taxRateId,
@@ -340,6 +364,7 @@ expensesRoutes.post('/', zValidator('json', expenseSchema), async (c) => {
         attachmentBase64: data.attachmentBase64,
         attachmentCount: data.attachmentCount ?? (data.attachmentBase64 ? 1 : 0),
         lineItems: data.lineItems ? data.lineItems as Prisma.InputJsonValue : Prisma.JsonNull,
+        paymentSplits: data.paymentSplits ? data.paymentSplits as Prisma.InputJsonValue : Prisma.JsonNull,
         extractedJson: data.extractedJson ? data.extractedJson as Prisma.InputJsonValue : Prisma.JsonNull,
         ocrConfidence: data.ocrConfidence != null ? new Prisma.Decimal(data.ocrConfidence) : null,
         duplicateOfId: duplicate?.id || null,
@@ -372,6 +397,7 @@ expensesRoutes.patch('/:id', zValidator('json', expenseSchema.partial()), async 
   } = data
   const updates: any = { ...rest }
   delete updates.lineItems
+  delete updates.paymentSplits
   delete updates.extractedJson
 
   if (data.contactId !== undefined || data.vendorName !== undefined) {
@@ -392,6 +418,7 @@ expensesRoutes.patch('/:id', zValidator('json', expenseSchema.partial()), async 
     updates.taxRateId = await resolveTaxRateId(orgId, data.taxRateId, data.taxAmount ?? Number(exists.taxAmount))
   }
   if (data.lineItems !== undefined) updates.lineItems = data.lineItems ? data.lineItems as Prisma.InputJsonValue : Prisma.JsonNull
+  if (data.paymentSplits !== undefined) updates.paymentSplits = data.paymentSplits ? data.paymentSplits as Prisma.InputJsonValue : Prisma.JsonNull
   if (data.extractedJson !== undefined) updates.extractedJson = data.extractedJson ? data.extractedJson as Prisma.InputJsonValue : Prisma.JsonNull
   if (data.ocrConfidence !== undefined) updates.ocrConfidence = data.ocrConfidence != null ? new Prisma.Decimal(data.ocrConfidence) : null
   if (data.date) updates.date = new Date(data.date)

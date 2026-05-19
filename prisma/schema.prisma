@@ -1142,6 +1142,7 @@ model Expense {
   attachmentBase64 String? @db.Text
   attachmentCount Int @default(0)
   lineItems     Json?
+  paymentSplits Json?
   extractedJson Json?
   ocrConfidence Decimal? @db.Decimal(5, 4)
   duplicateOfId String?
