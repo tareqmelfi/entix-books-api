@@ -11,6 +11,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { prisma } from '../db.js'
 import { nextContactCode } from '../lib/numbering.js'
+import { isOpenRouterModelIssue, openRouterVisionModels } from '../lib/openrouter-models.js'
 
 export const contactsRoutes = new Hono()
 
@@ -244,7 +245,7 @@ Rules:
       ]
     : `Extract from text:\n${Buffer.from(fileBase64, 'base64').toString('utf-8').slice(0, 30000)}`
 
-  const MODELS = ['anthropic/claude-haiku-4.5', 'anthropic/claude-3.5-haiku', 'anthropic/claude-3-5-sonnet']
+  const MODELS = openRouterVisionModels(process.env.OPENROUTER_OCR_MODEL)
   let r: Response | null = null
   let lastDetail = ''
   for (const model of MODELS) {
@@ -271,7 +272,7 @@ Rules:
       })
       if (attempt.ok) { r = attempt; break }
       lastDetail = await attempt.text()
-      if (attempt.status === 404 || attempt.status === 400) continue
+      if (isOpenRouterModelIssue(attempt.status, lastDetail)) continue
       r = attempt; break
     } catch (e) { lastDetail = String(e) }
   }

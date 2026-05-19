@@ -21,17 +21,14 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { resolveAiKey, logAiUsage, estimateCost } from '../lib/ai-billing.js'
+import { inferMimeType, isImageMime, normalizeImageForVision } from '../lib/document-images.js'
+import { isOpenRouterModelIssue, openRouterVisionModels } from '../lib/openrouter-models.js'
 
 export const agentExtractRoutes = new Hono()
 
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
-// Primary + fallback (OpenRouter renames models occasionally)
-const VISION_MODELS = [
-  'anthropic/claude-haiku-4.5',
-  'anthropic/claude-3.5-haiku',
-  'anthropic/claude-3-5-sonnet',
-]
-const VISION_MODEL = VISION_MODELS[0]
+// Primary + fallback. Keep this on current router aliases because model ids drift.
+const VISION_MODELS = openRouterVisionModels(process.env.OPENROUTER_OCR_MODEL)
 
 // PaddleOCR fallback service · self-hosted on same VPS (UX-161)
 const PADDLE_OCR_URL = process.env.PADDLE_OCR_URL || ''
@@ -136,6 +133,19 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
   const auth = c.get('auth') as any
   const orgId = c.get('orgId') as string
   const { fileBase64, fileName, mimeType, target, hint, defaultTaxRate, currency } = c.req.valid('json')
+  const originalMimeType = inferMimeType(mimeType, fileName)
+  const prepared = isImageMime(originalMimeType)
+    ? await normalizeImageForVision({ fileBase64, mimeType: originalMimeType, fileName })
+    : { fileBase64, mimeType: originalMimeType, fileName, warnings: [] as string[], converted: false }
+
+  if (prepared.error) {
+    return c.json({
+      error: 'image_preprocess_failed',
+      detail: prepared.error,
+      message: prepared.error,
+      originalMimeType,
+    }, 415)
+  }
 
   // Resolve AI key (BYOK or hosted credits)
   let resolved
@@ -150,9 +160,9 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
 
   // Build the user message
   // For images/PDFs: vision payload · for text: plain text
-  const isImage = mimeType.startsWith('image/')
-  const isPdf = mimeType === 'application/pdf'
-  const isText = mimeType.startsWith('text/') || mimeType.includes('csv')
+  const isImage = prepared.mimeType.startsWith('image/')
+  const isPdf = prepared.mimeType === 'application/pdf'
+  const isText = prepared.mimeType.startsWith('text/') || prepared.mimeType.includes('csv')
 
   let userContent: any
   if (isPdf) {
@@ -166,7 +176,7 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
         type: 'file',
         file: {
           filename: fileName || 'document.pdf',
-          file_data: `data:application/pdf;base64,${fileBase64}`,
+          file_data: `data:application/pdf;base64,${prepared.fileBase64}`,
         },
       },
     ]
@@ -178,14 +188,14 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
       },
       {
         type: 'image_url',
-        image_url: { url: `data:${mimeType};base64,${fileBase64}` },
+        image_url: { url: `data:${prepared.mimeType};base64,${prepared.fileBase64}` },
       },
     ]
   } else if (isText) {
-    const text = Buffer.from(fileBase64, 'base64').toString('utf-8')
+    const text = Buffer.from(prepared.fileBase64, 'base64').toString('utf-8')
     userContent = `Extract structured data from this text. Target: ${target}.${hint ? `\n\nUser hint: ${hint}` : ''}\n\nDefault tax rate: ${defaultTaxRate}\nDefault currency: ${currency}\n\n--- DOCUMENT START ---\n${text.slice(0, 50000)}\n--- DOCUMENT END ---`
   } else {
-    return c.json({ error: 'unsupported_type', message: `نوع الملف ${mimeType} غير مدعوم` }, 400)
+    return c.json({ error: 'unsupported_type', message: `نوع الملف ${prepared.mimeType} غير مدعوم` }, 400)
   }
 
   // Try each model in order · fall back on transient/model errors
@@ -218,7 +228,7 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
       if (attempt.ok) { r = attempt; usedModel = model; break }
       lastDetail = await attempt.text()
       console.warn(`[extract] model ${model} failed (${attempt.status}):`, lastDetail.slice(0, 200))
-      if (attempt.status === 404 || attempt.status === 400) continue // try next model
+      if (isOpenRouterModelIssue(attempt.status, lastDetail)) continue // try next model
       r = attempt; break // auth/quota error · don't retry
     } catch (fetchErr) {
       lastDetail = String(fetchErr)
@@ -231,7 +241,7 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
       console.error('[extract-document] all Claude vision models failed', detail)
 
       // Fallback to PaddleOCR · returns raw text only · we wrap in a minimal envelope
-      const paddleText = await paddleOcrFallback(fileBase64, mimeType)
+      const paddleText = await paddleOcrFallback(prepared.fileBase64, prepared.mimeType)
       if (paddleText) {
         await logAiUsage({
           orgId, userId: auth?.userId,
@@ -256,7 +266,7 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
         if (j?.error?.code === 'insufficient_quota' || /credit|quota|insufficient/i.test(j?.error?.message || '')) {
           userMsg = 'رصيد OpenRouter منخفض · شحن الرصيد أو استخدم مفتاحاً خاصاً (BYOK)'
         }
-        if (/model not found|not_found/i.test(j?.error?.message || '')) {
+        if (/model not found|not_found|no endpoints found/i.test(j?.error?.message || '')) {
           userMsg = 'جميع النماذج غير متاحة حالياً'
         }
         if (/file|pdf|attach/i.test(j?.error?.message || '')) {
@@ -266,11 +276,10 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
       return c.json({ error: 'extraction_failed', detail: userMsg, raw: detail.slice(0, 600), status: r?.status || 502 }, 502)
     }
     const json = await r.json() as any
-    void usedModel
     const content = json.choices?.[0]?.message?.content || '{}'
     const promptTokens = json.usage?.prompt_tokens || 0
     const completionTokens = json.usage?.completion_tokens || 0
-    const cost = estimateCost(VISION_MODEL, promptTokens, completionTokens)
+    const cost = estimateCost(usedModel, promptTokens, completionTokens)
 
     let parsed: any
     try { parsed = JSON.parse(content) } catch (e) {
@@ -282,10 +291,13 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
       parsed.kind = 'invoice' // user wants invoice · convert
       parsed.warnings = [...(parsed.warnings || []), 'document detected as quote · presented as invoice'];
     }
+    if (prepared.warnings.length) {
+      parsed.warnings = [...(parsed.warnings || []), ...prepared.warnings]
+    }
 
     await logAiUsage({
       orgId, userId: auth?.userId,
-      endpoint: '/api/agent/extract-document', model: VISION_MODEL,
+      endpoint: '/api/agent/extract-document', model: usedModel,
       source: resolved.source, provider: resolved.provider,
       promptTokens, completionTokens, costUsd: cost, successful: true,
     })
@@ -293,10 +305,15 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
     return c.json({
       ...parsed,
       _meta: {
-        model: VISION_MODEL,
+        model: usedModel,
         cost: cost.toFixed(6),
         source: resolved.source,
         target,
+        file: {
+          originalMimeType,
+          mimeType: prepared.mimeType,
+          converted: prepared.converted,
+        },
       },
     })
   } catch (e: any) {

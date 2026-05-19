@@ -14,6 +14,7 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
 import { resolveAiKey, logAiUsage, estimateCost, QuotaExceededError, DisabledByAdminError } from '../lib/ai-billing.js'
+import { isOpenRouterModelIssue, openRouterAgentModels } from '../lib/openrouter-models.js'
 
 export const agentRoutes = new Hono()
 
@@ -22,12 +23,7 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
 // Fallback chain · if first model is unavailable, try the next one
 // Order: best-quality first · cheaper/older as fallback
-const MODEL_CHAIN = [
-  process.env.OPENROUTER_AGENT_MODEL || 'anthropic/claude-sonnet-4.5',
-  'anthropic/claude-3.7-sonnet',
-  'anthropic/claude-3.5-sonnet',
-  'openai/gpt-4o-mini', // last-resort fallback so the agent never goes fully dark
-]
+const MODEL_CHAIN = openRouterAgentModels(process.env.OPENROUTER_AGENT_MODEL)
 
 async function callOpenRouterWithFallback(payload: any, apiKey: string): Promise<{ ok: true; json: any; model: string } | { ok: false; status: number; detail: string; triedModels: string[] }> {
   const tried: string[] = []
@@ -49,7 +45,7 @@ async function callOpenRouterWithFallback(payload: any, apiKey: string): Promise
       }
       const txt = await r.text()
       // 4xx for unknown model · try next model. 5xx · retry once then give up
-      const isModelIssue = r.status === 400 || r.status === 404 || /model.*not.*found|invalid.*model|no longer available/i.test(txt)
+      const isModelIssue = isOpenRouterModelIssue(r.status, txt)
       if (!isModelIssue && r.status >= 500) {
         // brief retry on the same model (transient upstream)
         await new Promise((res) => setTimeout(res, 500))

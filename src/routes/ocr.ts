@@ -16,18 +16,15 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { resolveAiKey, logAiUsage, estimateCost, QuotaExceededError, DisabledByAdminError } from '../lib/ai-billing.js'
+import { inferMimeType, isImageMime, normalizeImageForVision, type NormalizedDocumentFile } from '../lib/document-images.js'
+import { isOpenRouterModelIssue, openRouterVisionModels } from '../lib/openrouter-models.js'
 
 export const ocrRoutes = new Hono()
 
 const OPENROUTER_KEY = process.env.OPENROUTER_API_KEY || ''
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
-const VISION_MODEL_CHAIN = [
-  process.env.OPENROUTER_OCR_MODEL || 'anthropic/claude-haiku-4.5',
-  'anthropic/claude-3.5-haiku',
-  'anthropic/claude-3.5-sonnet',
-  'openai/gpt-4o-mini',
-]
+const VISION_MODEL_CHAIN = openRouterVisionModels(process.env.OPENROUTER_OCR_MODEL)
 
 const VISION_MIMES = new Set([
   'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif',
@@ -91,7 +88,7 @@ async function callOpenRouter(payload: any, apiKey: string): Promise<{ ok: true;
       if (r.ok) return { ok: true, json: await r.json(), model }
       const txt = await r.text()
       console.warn(`[ocr] model ${model} status=${r.status}`, txt.slice(0, 200))
-      const isModelIssue = r.status === 400 || r.status === 404 || /model.*not.*found|invalid.*model|no longer available/i.test(txt)
+      const isModelIssue = isOpenRouterModelIssue(r.status, txt)
       if (!isModelIssue) {
         // 5xx · brief retry on same model
         if (r.status >= 500) {
@@ -117,7 +114,7 @@ async function callOpenRouter(payload: any, apiKey: string): Promise<{ ok: true;
 }
 
 function buildUserContent(file: { fileBase64: string; mimeType: string; fileName?: string; rawText?: string }, hint?: string) {
-  const mime = file.mimeType || 'application/octet-stream'
+  const mime = inferMimeType(file.mimeType, file.fileName)
   const isPdf = mime === 'application/pdf' || (file.fileName || '').toLowerCase().endsWith('.pdf')
   const isImage = mime.startsWith('image/')
   const intro = `File: ${file.fileName || '(unnamed)'} · type: ${mime}${hint ? ` · hint: ${hint}` : ''}`
@@ -156,6 +153,31 @@ function buildUserContent(file: { fileBase64: string; mimeType: string; fileName
   ]
 }
 
+async function prepareFileForOcr(file: {
+  fileBase64: string
+  mimeType?: string
+  fileName?: string
+  rawText?: string
+}): Promise<NormalizedDocumentFile & { rawText?: string }> {
+  const mimeType = inferMimeType(file.mimeType, file.fileName)
+  if (!isImageMime(mimeType)) {
+    return {
+      fileBase64: file.fileBase64,
+      mimeType,
+      fileName: file.fileName,
+      rawText: file.rawText,
+      warnings: [],
+      converted: false,
+    }
+  }
+  const normalized = await normalizeImageForVision({
+    fileBase64: file.fileBase64,
+    mimeType,
+    fileName: file.fileName,
+  })
+  return { ...normalized, rawText: file.rawText }
+}
+
 const singleSchema = z.object({
   fileBase64: z.string().min(20),
   mimeType: z.string().default('application/octet-stream'),
@@ -180,10 +202,20 @@ ocrRoutes.post('/extract', zValidator('json', singleSchema), async (c) => {
     return c.json({ error: 'ocr_disabled', detail: e.message }, 503)
   }
 
+  const prepared = await prepareFileForOcr(f)
+  if (prepared.error) {
+    return c.json({
+      error: 'image_preprocess_failed',
+      detail: prepared.error,
+      message: prepared.error,
+      originalMimeType: inferMimeType(f.mimeType, f.fileName),
+    }, 415)
+  }
+
   const result = await callOpenRouter({
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: buildUserContent(f, f.docType) },
+      { role: 'user', content: buildUserContent(prepared, f.docType) },
     ],
     response_format: { type: 'json_object' },
     max_tokens: 2000,
@@ -205,6 +237,9 @@ ocrRoutes.post('/extract', zValidator('json', singleSchema), async (c) => {
   try { extracted = JSON.parse(content) } catch {
     const m = content.match(/\{[\s\S]*\}/)
     extracted = m ? JSON.parse(m[0]) : null
+  }
+  if (extracted && prepared.warnings.length) {
+    extracted.warnings = [...(extracted.warnings || []), ...prepared.warnings]
   }
 
   // Cost tracking
@@ -268,17 +303,22 @@ ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
     while (queue.length > 0) {
       const f = queue.shift()
       if (!f) break
+      const prepared = await prepareFileForOcr(f)
+      if (prepared.error) {
+        results.push({ fileName: f.fileName, mimeType: inferMimeType(f.mimeType, f.fileName), ok: false, error: prepared.error })
+        continue
+      }
       const r = await callOpenRouter({
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: buildUserContent(f, hint) },
+          { role: 'user', content: buildUserContent(prepared, hint) },
         ],
         response_format: { type: 'json_object' },
         max_tokens: 2000,
         temperature: 0,
       }, resolved.apiKey)
       if (!r.ok) {
-        results.push({ fileName: f.fileName, mimeType: f.mimeType, ok: false, error: r.detail })
+        results.push({ fileName: f.fileName, mimeType: prepared.mimeType, ok: false, error: r.detail })
         continue
       }
       const content = r.json?.choices?.[0]?.message?.content || ''
@@ -298,10 +338,13 @@ ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
       primaryModel = r.model
 
       if (!extracted) {
-        results.push({ fileName: f.fileName, mimeType: f.mimeType, ok: false, error: 'parse_failed' })
+        results.push({ fileName: f.fileName, mimeType: prepared.mimeType, ok: false, error: 'parse_failed' })
         continue
       }
-      results.push({ fileName: f.fileName, mimeType: f.mimeType, ok: true, extracted, model: r.model })
+      if (prepared.warnings.length) {
+        extracted.warnings = [...(extracted.warnings || []), ...prepared.warnings]
+      }
+      results.push({ fileName: f.fileName, mimeType: prepared.mimeType, ok: true, extracted, model: r.model })
     }
   })
   await Promise.all(workers)
