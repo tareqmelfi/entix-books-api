@@ -115,6 +115,8 @@ const updateOrgSchema = z.object({
   crNumber: z.string().optional().nullable(),
   zatcaEnabled: z.boolean().optional(),
   logoUrl: z.string().optional().nullable(),
+  printLogoUrl: z.string().optional().nullable(),
+  defaultInvoiceLanguage: z.enum(["ar", "en"]).optional().nullable(),
   stampUrl: z.string().optional().nullable(),
   email: z.string().optional().nullable(),
   phone: z.string().optional().nullable(),
