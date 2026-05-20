@@ -48,6 +48,7 @@ export async function normalizeImageForVision(input: {
   fileBase64: string
   mimeType?: string | null
   fileName?: string | null
+  trimEdges?: boolean
 }): Promise<NormalizedDocumentFile> {
   const mimeType = inferMimeType(input.mimeType, input.fileName)
   const base = stripDataUrl(input.fileBase64)
@@ -71,11 +72,20 @@ export async function normalizeImageForVision(input: {
       inputBuffer = await convertHeicToJpeg(inputBuffer)
     }
 
-    const output = await sharp(inputBuffer, {
+    let pipeline = sharp(inputBuffer, {
       failOn: 'none',
       limitInputPixels: 120_000_000,
     })
       .rotate()
+      .flatten({ background: '#ffffff' })
+
+    if (input.trimEdges !== false) {
+      pipeline = pipeline
+        .trim({ threshold: 24 })
+        .extend({ top: 16, right: 16, bottom: 16, left: 16, background: '#ffffff' })
+    }
+
+    const output = await pipeline
       .resize({
         width: 2200,
         height: 3200,

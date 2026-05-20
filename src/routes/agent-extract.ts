@@ -82,6 +82,13 @@ const extractSchema = z.object({
   currency: z.string().length(3).default('SAR'),
 })
 
+const normalizeImageSchema = z.object({
+  fileBase64: z.string().min(1).max(140_000_000),
+  fileName: z.string().optional(),
+  mimeType: z.string().default('image/jpeg'),
+  trimEdges: z.boolean().default(true),
+})
+
 const SYSTEM_PROMPT = `You are a document extraction engine for Entix Books (Arabic accounting · KSA).
 Input: an image, PDF, or text blob from a receipt/quote/invoice/contract.
 Goal: extract STRUCTURED data the app can drop straight into a form.
@@ -335,4 +342,32 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
     console.error('[extract-document] error', e)
     return c.json({ error: 'exception', message: e?.message || 'unknown' }, 500)
   }
+})
+
+agentExtractRoutes.post('/normalize-image', zValidator('json', normalizeImageSchema), async (c) => {
+  const { fileBase64, fileName, mimeType, trimEdges } = c.req.valid('json')
+  const originalMimeType = inferMimeType(mimeType, fileName)
+  if (!isImageMime(originalMimeType)) {
+    return c.json({ error: 'unsupported_type', message: 'هذا المسار يدعم الصور فقط' }, 400)
+  }
+
+  const prepared = await normalizeImageForVision({ fileBase64, mimeType: originalMimeType, fileName, trimEdges })
+  if (prepared.error) {
+    return c.json({
+      error: 'image_preprocess_failed',
+      detail: prepared.error,
+      message: prepared.error,
+      originalMimeType,
+    }, 415)
+  }
+
+  return c.json({
+    ok: true,
+    fileBase64: prepared.fileBase64,
+    mimeType: prepared.mimeType,
+    fileName: prepared.fileName || fileName || 'document.jpg',
+    warnings: prepared.warnings,
+    converted: prepared.converted,
+    originalMimeType,
+  })
 })
