@@ -544,6 +544,16 @@ function inferTypeFromCode(code: string): 'ASSET' | 'LIABILITY' | 'EQUITY' | 'RE
   return null
 }
 
+function isPdfDocument(file: { mimeType?: string; fileName?: string }) {
+  const mime = inferMimeType(file.mimeType, file.fileName)
+  return mime === 'application/pdf' || (file.fileName || '').toLowerCase().endsWith('.pdf')
+}
+
+function openRouterFileParserPlugins(file: { mimeType?: string; fileName?: string }) {
+  if (!isPdfDocument(file)) return undefined
+  return [{ id: 'file-parser', pdf: { engine: 'pdf-text' } }]
+}
+
 accountsRoutes.post('/import/analyze', zValidator('json', importAnalyzeSchema), async (c) => {
   const orgId = c.get('orgId') as string
   const { fileBase64, fileName, mimeType } = c.req.valid('json')
@@ -581,16 +591,30 @@ Rules:
 - Infer type from code prefix when visible: 1 Asset, 2 Liability, 3 Equity, 4 Revenue, 5/6/7 Expense.
 - Keep parentCode empty/null if not visible.
 - Do not invent rows that are not in the document.
+- If the file has both existing and proposed accounts, extract every visible account row and keep exact codes so the app can detect duplicates.
+- Use confidence below 0.70 when the row has missing code/name/type/parent ambiguity.
 - If the document is not a chart of accounts, return rows=[] and a warning.`
 
+  const isPdf = isPdfDocument(prepared)
   const content = prepared.mimeType.startsWith('image/')
     ? [
         { type: 'text', text: `Extract chart of accounts rows from this image. File: ${fileName || 'unknown'}` },
         { type: 'image_url', image_url: { url: `data:${prepared.mimeType};base64,${prepared.fileBase64}` } },
       ]
+    : isPdf
+      ? [
+          { type: 'text', text: `Extract chart of accounts rows from this PDF. File: ${fileName || 'unknown'}. Read every page and preserve account codes.` },
+          {
+            type: 'file',
+            file: {
+              filename: fileName || 'chart-of-accounts.pdf',
+              file_data: `data:application/pdf;base64,${prepared.fileBase64}`,
+            },
+          },
+        ]
     : `Extract chart of accounts rows from this text/file (${fileName || 'unknown'}):\n${Buffer.from(prepared.fileBase64, 'base64').toString('utf-8').slice(0, 60000)}`
 
-  const models = prepared.mimeType.startsWith('image/')
+  const models = prepared.mimeType.startsWith('image/') || isPdf
     ? openRouterVisionModels(process.env.OPENROUTER_OCR_MODEL)
     : ['anthropic/claude-haiku-4.5']
 
@@ -613,7 +637,8 @@ Rules:
           ],
           response_format: { type: 'json_object' },
           temperature: 0,
-          max_tokens: 3000,
+          max_tokens: 5000,
+          plugins: openRouterFileParserPlugins(prepared),
         }),
       })
       if (!r.ok) {

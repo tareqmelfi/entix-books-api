@@ -52,6 +52,7 @@ Schema:
   "discount": number | null,
   "total": number | null,
   "paymentMethod": "CASH" | "BANK_TRANSFER" | "CARD" | "MADA" | "STC_PAY" | "CHECK" | "OTHER" | null,
+  "payments": [{ "method": "CASH" | "BANK_TRANSFER" | "CARD" | "MADA" | "STC_PAY" | "CHECK" | "OTHER", "amount": number, "reference": string | null, "cardLast4": string | null }],
   "category": string | null,
   "tags": string[],
   "lineItems": [{ "description": string, "quantity": number, "unitPrice": number, "taxRate": number | null, "subtotal": number }],
@@ -67,6 +68,12 @@ Rules:
 - Arabic text: keep in Arabic · don't translate
 - Currency: infer from symbol/text · default SAR if Saudi VAT pattern (300xxx) detected
 - If unsure: null + warning · DO NOT invent
+- For Saudi tax invoices, vendorVat is critical. Extract 15-digit VAT/tax IDs from labels like الرقم الضريبي, VAT Number, Tax Number. Prefer vendor tax ID over buyer tax ID.
+- documentNumber is critical. Extract invoice/receipt number from labels like رقم الفاتورة, رقم الإيصال, invoice no, receipt no, bill no, ref. Do NOT use terminal ID, authorization code, cashier number, commercial registration, VAT number, or card number as documentNumber.
+- Never collapse visible line items into only a total. If rows/items are visible, preserve each item with description, quantity, unitPrice, taxRate, subtotal. If the receipt repeats the same item in separate rows, keep separate rows unless the receipt explicitly groups them.
+- If payment details show split payments, return all visible payments in payments[] and choose paymentMethod from the largest payment. If only one payment is visible, include one payment row.
+- For card payments, use MADA when mada is visible, otherwise CARD. If the last 4 digits are visible, put them in cardLast4 and never include the full card number.
+- Warnings must mention missing documentNumber, missing vendorVat, uncertain date, uncertain total, or uncertain line items.
 - "tags" should help classification (e.g. ["restaurant","mada","Q1-2026","food"]) · short kebab-case-ar/en
 - "summary": one Arabic sentence max 120 chars`
 
@@ -153,6 +160,16 @@ function buildUserContent(file: { fileBase64: string; mimeType: string; fileName
   ]
 }
 
+function isPdfDocument(file: { mimeType?: string; fileName?: string }) {
+  const mime = inferMimeType(file.mimeType, file.fileName)
+  return mime === 'application/pdf' || (file.fileName || '').toLowerCase().endsWith('.pdf')
+}
+
+function fileParserPlugins(file: { mimeType?: string; fileName?: string }) {
+  if (!isPdfDocument(file)) return undefined
+  return [{ id: 'file-parser', pdf: { engine: 'pdf-text' } }]
+}
+
 async function prepareFileForOcr(file: {
   fileBase64: string
   mimeType?: string
@@ -218,8 +235,9 @@ ocrRoutes.post('/extract', zValidator('json', singleSchema), async (c) => {
       { role: 'user', content: buildUserContent(prepared, f.docType) },
     ],
     response_format: { type: 'json_object' },
-    max_tokens: 2000,
+    max_tokens: 3500,
     temperature: 0,
+    plugins: fileParserPlugins(prepared),
   }, resolved.apiKey)
 
   if (!result.ok) {
@@ -314,8 +332,9 @@ ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
           { role: 'user', content: buildUserContent(prepared, hint) },
         ],
         response_format: { type: 'json_object' },
-        max_tokens: 2000,
+        max_tokens: 3500,
         temperature: 0,
+        plugins: fileParserPlugins(prepared),
       }, resolved.apiKey)
       if (!r.ok) {
         results.push({ fileName: f.fileName, mimeType: prepared.mimeType, ok: false, error: r.detail })

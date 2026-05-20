@@ -15,6 +15,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
 import { resolveAiKey, logAiUsage, estimateCost, QuotaExceededError, DisabledByAdminError } from '../lib/ai-billing.js'
 import { isOpenRouterModelIssue, openRouterAgentModels } from '../lib/openrouter-models.js'
+import { nextContactCode } from '../lib/numbering.js'
 
 export const agentRoutes = new Hono()
 
@@ -80,6 +81,7 @@ Rules:
 - Numbers: SAR (default) · respect org's base currency
 - Arabic-first · use English when user prompts in English
 - If user uploads an image · use ocr_extract first then create_expense or create_invoice
+- When recording an expense from OCR, preserve documentNumber, supplierTaxId/vendorVat, lineItems, paymentSplits, and duplicate warnings. Do not reduce a tax invoice to only amount.
 - Be concise · 2-4 sentences usually enough · use tables for lists
 - If a tool fails · explain why and suggest alternative`
 
@@ -129,6 +131,8 @@ const TOOLS = [
           from: { type: 'string', description: 'YYYY-MM-DD' },
           to: { type: 'string', description: 'YYYY-MM-DD' },
           category: { type: 'string' },
+          vendorName: { type: 'string' },
+          documentNumber: { type: 'string' },
         },
       },
     },
@@ -148,7 +152,36 @@ const TOOLS = [
           paymentMethod: { type: 'string', enum: ['CASH', 'BANK_TRANSFER', 'CARD', 'MADA', 'STC_PAY', 'CHECK', 'OTHER'] },
           description: { type: 'string' },
           vendorName: { type: 'string' },
+          supplierTaxId: { type: 'string' },
+          documentNumber: { type: 'string' },
+          reference: { type: 'string' },
           taxAmount: { type: 'number' },
+          currency: { type: 'string' },
+          lineItems: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                description: { type: 'string' },
+                quantity: { type: 'number' },
+                unitPrice: { type: 'number' },
+                taxRate: { type: 'number' },
+                subtotal: { type: 'number' },
+              },
+            },
+          },
+          paymentSplits: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                method: { type: 'string', enum: ['CASH', 'BANK_TRANSFER', 'CARD', 'MADA', 'STC_PAY', 'CHECK', 'OTHER'] },
+                amount: { type: 'number' },
+                reference: { type: 'string' },
+                cardLast4: { type: 'string' },
+              },
+            },
+          },
         },
       },
     },
@@ -211,11 +244,12 @@ async function executeTool(name: string, args: any, orgId: string) {
         where.OR = [
           { displayName: { contains: args.query, mode: 'insensitive' } },
           { email: { contains: args.query, mode: 'insensitive' } },
+          { taxId: { contains: args.query } },
           { vatNumber: { contains: args.query } },
         ]
       }
       const items = await prisma.contact.findMany({ where, take: 50, orderBy: { displayName: 'asc' } })
-      return { count: items.length, items: items.map((c) => ({ id: c.id, name: c.displayName, email: c.email, phone: c.phone, type: c.type, vatNumber: c.vatNumber })) }
+      return { count: items.length, items: items.map((c) => ({ id: c.id, name: c.displayName, email: c.email, phone: c.phone, type: c.type, taxId: c.taxId, vatNumber: c.vatNumber })) }
     }
     case 'create_contact': {
       const c = await prisma.contact.create({
@@ -225,6 +259,7 @@ async function executeTool(name: string, args: any, orgId: string) {
           displayName: args.displayName,
           email: args.email || null,
           phone: args.phone || null,
+          taxId: args.vatNumber || null,
           vatNumber: args.vatNumber || null,
           city: args.city || null,
           country: args.country || 'SA',
@@ -240,9 +275,11 @@ async function executeTool(name: string, args: any, orgId: string) {
         if (args.to) where.date.lte = new Date(args.to)
       }
       if (args.category) where.category = args.category
+      if (args.vendorName) where.vendorName = { contains: args.vendorName, mode: 'insensitive' }
+      if (args.documentNumber) where.documentNumber = { contains: args.documentNumber, mode: 'insensitive' }
       const items = await prisma.expense.findMany({ where, take: 50, orderBy: { date: 'desc' } })
       const total = items.reduce((s, e) => s + Number(e.total), 0)
-      return { count: items.length, total, items: items.map((e) => ({ id: e.id, number: e.number, date: e.date.toISOString().slice(0, 10), category: e.category, amount: Number(e.total), method: e.paymentMethod, vendor: e.vendorName })) }
+      return { count: items.length, total, items: items.map((e) => ({ id: e.id, number: e.number, documentNumber: e.documentNumber, date: e.date.toISOString().slice(0, 10), category: e.category, amount: Number(e.total), taxAmount: Number(e.taxAmount), method: e.paymentMethod, vendor: e.vendorName, duplicateOfId: e.duplicateOfId })) }
     }
     case 'create_expense': {
       const year = new Date().getFullYear()
@@ -250,21 +287,86 @@ async function executeTool(name: string, args: any, orgId: string) {
       const n = last ? Number(last.number.split('-').pop()) + 1 : 1
       const number = `EXP-${year}-${String(n).padStart(4, '0')}`
       const total = args.amount + (args.taxAmount || 0)
+      const vendorName = typeof args.vendorName === 'string' ? args.vendorName.trim() : ''
+      const supplierTaxId = typeof args.supplierTaxId === 'string' ? args.supplierTaxId.replace(/[^\dA-Za-z]/g, '') : ''
+      let contactId: string | null = null
+      if (vendorName || supplierTaxId) {
+        const existing = await prisma.contact.findFirst({
+          where: {
+            orgId,
+            isActive: true,
+            OR: [
+              ...(supplierTaxId ? [{ taxId: { equals: supplierTaxId } }, { vatNumber: { equals: supplierTaxId } }] : []),
+              ...(vendorName ? [{ displayName: { equals: vendorName, mode: 'insensitive' as const } }] : []),
+            ],
+          },
+          select: { id: true, isSupplier: true, isCustomer: true },
+        })
+        if (existing) {
+          contactId = existing.id
+          if (!existing.isSupplier) {
+            await prisma.contact.update({ where: { id: existing.id }, data: { isSupplier: true, type: existing.isCustomer ? 'BOTH' : 'SUPPLIER' } })
+          }
+        } else if (vendorName) {
+          let customCode: string | null = null
+          try { customCode = await nextContactCode(orgId) } catch { customCode = null }
+          const created = await prisma.contact.create({
+            data: {
+              orgId,
+              customCode,
+              type: 'SUPPLIER',
+              isCustomer: false,
+              isSupplier: true,
+              entityKind: 'COMPANY',
+              displayName: vendorName,
+              legalName: vendorName,
+              taxId: supplierTaxId || null,
+              vatNumber: supplierTaxId || null,
+              country: 'SA',
+              defaultCurrency: args.currency || 'SAR',
+              notes: 'Auto-created by AI assistant expense entry.',
+            },
+            select: { id: true },
+          })
+          contactId = created.id
+        }
+      }
+      const duplicateWhere: any = { orgId, documentNumber: args.documentNumber }
+      const duplicateOr: any[] = [
+        ...(contactId ? [{ contactId }] : []),
+        ...(vendorName ? [{ vendorName: { equals: vendorName, mode: 'insensitive' as const } }] : []),
+      ]
+      if (duplicateOr.length) duplicateWhere.OR = duplicateOr
+      const duplicate = args.documentNumber
+        ? await prisma.expense.findFirst({
+            where: duplicateWhere,
+            select: { id: true, number: true, total: true, date: true, vendorName: true },
+          })
+        : null
       const e = await prisma.expense.create({
         data: {
           orgId,
+          contactId,
           number,
           date: new Date(args.date),
           category: args.category,
           description: args.description,
           amount: new Prisma.Decimal(args.amount),
+          subtotal: new Prisma.Decimal(args.amount),
           paymentMethod: args.paymentMethod,
-          vendorName: args.vendorName,
+          vendorName: vendorName || null,
+          documentNumber: args.documentNumber || null,
+          reference: args.reference || args.documentNumber || null,
           taxAmount: new Prisma.Decimal(args.taxAmount || 0),
           total: new Prisma.Decimal(total),
+          currency: args.currency || 'SAR',
+          lineItems: Array.isArray(args.lineItems) ? args.lineItems as Prisma.InputJsonValue : Prisma.JsonNull,
+          paymentSplits: Array.isArray(args.paymentSplits) ? args.paymentSplits as Prisma.InputJsonValue : Prisma.JsonNull,
+          duplicateOfId: duplicate?.id || null,
+          duplicateReason: duplicate ? 'same_document_number' : null,
         },
       })
-      return { id: e.id, number: e.number, total: Number(e.total), category: e.category }
+      return { id: e.id, number: e.number, documentNumber: e.documentNumber, total: Number(e.total), category: e.category, duplicateExpense: duplicate }
     }
     case 'list_invoices': {
       const where: any = { orgId }
