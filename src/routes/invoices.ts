@@ -66,16 +66,17 @@ async function calcTotals(lines: z.infer<typeof lineSchema>[], orgId: string) {
   }
 }
 
-async function nextInvoiceNumber(orgId: string): Promise<string> {
+async function nextInvoiceNumber(orgId: string, contactId?: string | null): Promise<string> {
   // Use org's numbering settings · falls back to defaults
   const { nextInvoiceNumber: nextFromSettings } = await import('../lib/numbering.js')
-  return nextFromSettings(orgId)
+  return nextFromSettings(orgId, contactId)
 }
 
 // GET /invoices/_/next-number · returns the next invoice number without consuming it
 invoicesRoutes.get('/_/next-number', async (c) => {
   const orgId = c.get('orgId') as string
-  const number = await nextInvoiceNumber(orgId)
+  const contactId = c.req.query('contactId') || null
+  const number = await nextInvoiceNumber(orgId, contactId)
   return c.json({ number })
 })
 
@@ -137,7 +138,12 @@ invoicesRoutes.post('/', zValidator('json', invoiceSchema), async (c) => {
   if (!contact) return c.json({ error: 'invalid contact' }, 400)
 
   const totals = await calcTotals(data.lines, orgId)
-  const number = data.invoiceNumber || (await nextInvoiceNumber(orgId))
+  const number = data.invoiceNumber || (await nextInvoiceNumber(orgId, data.contactId))
+  const duplicate = await prisma.invoice.findFirst({
+    where: { orgId, invoiceNumber: number },
+    select: { id: true },
+  })
+  if (duplicate) return c.json({ error: 'duplicate_invoice_number', message: 'رقم الفاتورة مستخدم مسبقاً داخل هذه الشركة.' }, 409)
 
   const invoice = await prisma.invoice.create({
     data: {
@@ -172,6 +178,21 @@ invoicesRoutes.patch('/:id', zValidator('json', invoiceSchema.partial()), async 
 
   const data = c.req.valid('json')
   const updates: any = { ...data }
+
+  if (data.invoiceNumber && data.invoiceNumber !== exists.invoiceNumber && exists.status !== 'DRAFT') {
+    return c.json({
+      error: 'invoice_number_locked',
+      message: 'رقم الفاتورة يتثبت بعد إصدارها أو إرسالها ولا يمكن تغييره بعد ذلك.',
+    }, 400)
+  }
+
+  if (data.invoiceNumber && data.invoiceNumber !== exists.invoiceNumber) {
+    const duplicate = await prisma.invoice.findFirst({
+      where: { orgId, invoiceNumber: data.invoiceNumber, id: { not: id } },
+      select: { id: true },
+    })
+    if (duplicate) return c.json({ error: 'duplicate_invoice_number', message: 'رقم الفاتورة مستخدم مسبقاً داخل هذه الشركة.' }, 409)
+  }
 
   // Recompute totals if lines changed
   if (data.lines) {

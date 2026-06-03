@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
 import { createNotification } from './notifications.js'
+import { nextInvoiceNumber, nextQuoteNumber } from '../lib/numbering.js'
 
 export const quotesRoutes = new Hono()
 
@@ -63,30 +64,6 @@ async function calcTotals(lines: z.infer<typeof lineSchema>[], orgId: string) {
   }
 }
 
-async function nextQuoteNumber(orgId: string): Promise<string> {
-  const year = new Date().getFullYear()
-  const prefix = `Q-${year}-`
-  const last = await prisma.quote.findFirst({
-    where: { orgId, quoteNumber: { startsWith: prefix } },
-    orderBy: { quoteNumber: 'desc' },
-    select: { quoteNumber: true },
-  })
-  const lastNum = last ? Number(last.quoteNumber.split('-').pop() || '0') : 0
-  return `${prefix}${String(lastNum + 1).padStart(4, '0')}`
-}
-
-async function nextInvoiceNumber(orgId: string): Promise<string> {
-  const year = new Date().getFullYear()
-  const prefix = `INV-${year}-`
-  const last = await prisma.invoice.findFirst({
-    where: { orgId, invoiceNumber: { startsWith: prefix } },
-    orderBy: { invoiceNumber: 'desc' },
-    select: { invoiceNumber: true },
-  })
-  const lastNum = last ? Number(last.invoiceNumber.split('-').pop() || '0') : 0
-  return `${prefix}${String(lastNum + 1).padStart(5, '0')}`
-}
-
 quotesRoutes.get('/', async (c) => {
   const orgId = c.get('orgId')
   const status = c.req.query('status')
@@ -118,7 +95,7 @@ quotesRoutes.post('/', zValidator('json', quoteSchema), async (c) => {
   if (!contact) return c.json({ error: 'invalid contact' }, 400)
 
   const totals = await calcTotals(data.lines, orgId)
-  const number = data.quoteNumber || (await nextQuoteNumber(orgId))
+  const number = data.quoteNumber || (await nextQuoteNumber(orgId, data.contactId))
 
   const quote = await prisma.quote.create({
     data: {
@@ -189,7 +166,7 @@ quotesRoutes.post('/:id/convert-to-invoice', async (c) => {
     return c.json({ error: 'already_converted', invoiceId: q.convertedInvoiceId }, 409)
   }
 
-  const invoiceNumber = await nextInvoiceNumber(orgId)
+  const invoiceNumber = await nextInvoiceNumber(orgId, q.contactId)
   const dueDate = new Date()
   dueDate.setDate(dueDate.getDate() + 30)
 

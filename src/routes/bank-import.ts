@@ -10,6 +10,8 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
+import { resolveAiKey, logAiUsage, estimateCost, QuotaExceededError, DisabledByAdminError } from '../lib/ai-billing.js'
+import { isOpenRouterModelIssue, openRouterVisionModels } from '../lib/openrouter-models.js'
 import {
   parseCsvStatement,
   parseMt940,
@@ -21,37 +23,222 @@ import {
 
 export const bankImportRoutes = new Hono()
 
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
+const BANK_STATEMENT_MODEL_CHAIN = openRouterVisionModels(process.env.OPENROUTER_BANK_STATEMENT_MODEL || process.env.OPENROUTER_OCR_MODEL)
+
+async function callOpenRouterForStatement(payload: any, apiKey: string): Promise<{ ok: true; json: any; model: string } | { ok: false; status: number; detail: string; tried: string[] }> {
+  const tried: string[] = []
+  for (const model of BANK_STATEMENT_MODEL_CHAIN) {
+    tried.push(model)
+    try {
+      const r = await fetch(OPENROUTER_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://entix.io',
+          'X-Title': 'Entix Books · Bank Statement Import',
+        },
+        body: JSON.stringify({ ...payload, model }),
+      })
+      if (r.ok) return { ok: true, json: await r.json(), model }
+      const txt = await r.text()
+      const isModelIssue = isOpenRouterModelIssue(r.status, txt)
+      if (!isModelIssue && r.status < 500) return { ok: false, status: r.status, detail: txt.slice(0, 800), tried }
+    } catch (e: any) {
+      console.warn(`[bank-import] model ${model} threw`, e?.message)
+    }
+  }
+  return { ok: false, status: 502, detail: 'لا تتوفر نماذج قراءة كشف البنك حالياً', tried }
+}
+
+function normalizeAiRows(value: any): RawBankTransaction[] {
+  const rows = Array.isArray(value?.rows) ? value.rows : Array.isArray(value?.transactions) ? value.transactions : []
+  return rows.map((row: any) => {
+    const debit = Number(row.debit ?? 0)
+    const credit = Number(row.credit ?? 0)
+    const explicitAmount = row.amount !== undefined && row.amount !== null ? Number(row.amount) : NaN
+    const amount = Number.isFinite(explicitAmount) ? explicitAmount : credit - debit
+    return {
+      date: String(row.date || '').slice(0, 10),
+      description: String(row.description || row.memo || row.name || 'Bank transaction').trim(),
+      amount,
+      reference: row.reference ? String(row.reference) : undefined,
+      counterparty: row.counterparty ? String(row.counterparty) : undefined,
+      balance: row.balance !== undefined && row.balance !== null ? Number(row.balance) : undefined,
+      currency: row.currency ? String(row.currency).toUpperCase() : undefined,
+    }
+  }).filter((row: RawBankTransaction) => row.date && Number.isFinite(row.amount) && row.amount !== 0)
+}
+
+async function parsePdfStatementWithAi(opts: {
+  orgId: string
+  userId?: string | null
+  bankName?: string | null
+  currency: string
+  fileBase64: string
+  fileName?: string
+  mimeType?: string
+}): Promise<{ rows: RawBankTransaction[]; model: string; source: string }> {
+  let resolved: Awaited<ReturnType<typeof resolveAiKey>>
+  try { resolved = await resolveAiKey(opts.orgId) } catch (e: any) {
+    if (e instanceof QuotaExceededError) throw Object.assign(new Error('quota_exceeded'), { status: 402, detail: e.upgradeHint })
+    if (e instanceof DisabledByAdminError) throw Object.assign(new Error('ai_disabled'), { status: 403, detail: e.reason })
+    throw Object.assign(new Error('bank_statement_ai_disabled'), { status: 503, detail: e.message })
+  }
+
+  const prompt = `You are parsing a bank statement PDF for accounting reconciliation.
+Return ONLY valid JSON, no markdown.
+
+Schema:
+{
+  "statement": {
+    "bankName": string | null,
+    "accountNumberLast4": string | null,
+    "routingNumber": string | null,
+    "currency": string | null,
+    "periodStart": "YYYY-MM-DD" | null,
+    "periodEnd": "YYYY-MM-DD" | null
+  },
+  "rows": [
+    {
+      "date": "YYYY-MM-DD",
+      "description": string,
+      "amount": number,
+      "debit": number | null,
+      "credit": number | null,
+      "balance": number | null,
+      "reference": string | null,
+      "counterparty": string | null,
+      "currency": string | null
+    }
+  ]
+}
+
+Rules:
+- Extract transaction rows only, not summary totals.
+- Outflows/debits must be negative. Inflows/credits must be positive.
+- Use ISO dates. If year is omitted, infer it from the statement period.
+- Use decimals only, no commas or currency symbols.
+- Default currency: ${opts.currency}.
+- Expected bank/account: ${opts.bankName || 'unknown'}.
+- If a row is uncertain, include it only when date, description, and amount are visible.`
+
+  const result = await callOpenRouterForStatement({
+    messages: [
+      { role: 'system', content: prompt },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: `Parse this bank statement PDF. File: ${opts.fileName || 'bank-statement.pdf'}` },
+          {
+            type: 'file',
+            file: {
+              filename: opts.fileName || 'bank-statement.pdf',
+              file_data: `data:${opts.mimeType || 'application/pdf'};base64,${opts.fileBase64}`,
+            },
+          },
+        ],
+      },
+    ],
+    response_format: { type: 'json_object' },
+    max_tokens: 8000,
+    temperature: 0,
+    plugins: [{ id: 'file-parser', pdf: { engine: 'pdf-text' } }],
+  }, resolved.apiKey)
+
+  if (!result.ok) {
+    await logAiUsage({
+      orgId: opts.orgId, userId: opts.userId,
+      endpoint: '/api/bank-import/parse', model: BANK_STATEMENT_MODEL_CHAIN[0],
+      source: resolved.source, provider: resolved.provider,
+      costUsd: 0, successful: false, errorCode: 'openrouter_error',
+    })
+    throw Object.assign(new Error('openrouter_error'), { status: result.status, detail: result.detail, triedModels: result.tried })
+  }
+
+  const content = result.json?.choices?.[0]?.message?.content || ''
+  let parsed: any
+  try { parsed = JSON.parse(content) } catch {
+    const m = content.match(/\{[\s\S]*\}/)
+    parsed = m ? JSON.parse(m[0]) : null
+  }
+  const usage = result.json?.usage || {}
+  const cost = typeof usage.total_cost === 'number' && usage.total_cost > 0
+    ? usage.total_cost
+    : estimateCost(result.model, usage.prompt_tokens || 0, usage.completion_tokens || 0)
+  await logAiUsage({
+    orgId: opts.orgId, userId: opts.userId,
+    endpoint: '/api/bank-import/parse', model: result.model,
+    source: resolved.source, provider: resolved.provider,
+    promptTokens: usage.prompt_tokens || 0,
+    completionTokens: usage.completion_tokens || 0,
+    costUsd: cost, successful: !!parsed,
+    errorCode: parsed ? null : 'parse_failed',
+  })
+
+  if (!parsed) throw Object.assign(new Error('parse_failed'), { status: 502, detail: content.slice(0, 500) })
+  return { rows: normalizeAiRows(parsed), model: result.model, source: resolved.source }
+}
+
 bankImportRoutes.get('/profiles', (c) => {
   return c.json({
     profiles: Object.keys(KSA_BANK_PROFILES).map((id) => ({
       id,
       label: id === 'GENERIC' ? 'CSV Generic' : id,
     })),
-    formats: ['csv', 'mt940', 'ofx'],
+    formats: ['csv', 'mt940', 'ofx', 'pdf'],
   })
 })
 
 const parseSchema = z.object({
   bankAccountId: z.string(),
-  format: z.enum(['csv', 'mt940', 'ofx']).default('csv'),
+  format: z.enum(['csv', 'mt940', 'ofx', 'pdf']).default('csv'),
   profile: z.string().optional().default('GENERIC'),
-  text: z.string().min(1).max(5_000_000), // 5MB cap
+  text: z.string().max(5_000_000).optional(), // 5MB cap for text formats
+  fileBase64: z.string().max(20_000_000).optional(), // PDF fallback · base64 payload
+  fileName: z.string().optional(),
+  mimeType: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.format === 'pdf') {
+    if (!data.fileBase64) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['fileBase64'], message: 'PDF file is required' })
+  } else if (!data.text?.trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['text'], message: 'Statement text is required' })
+  }
 })
 
 bankImportRoutes.post('/parse', zValidator('json', parseSchema), async (c) => {
   const orgId = c.get('orgId') as string
-  const { bankAccountId, format, profile, text } = c.req.valid('json')
+  const auth = c.get('auth') as { userId?: string } | undefined
+  const { bankAccountId, format, profile, text, fileBase64, fileName, mimeType } = c.req.valid('json')
 
   const bank = await prisma.bankAccount.findFirst({ where: { id: bankAccountId, orgId } })
   if (!bank) return c.json({ error: 'invalid_bank_account' }, 400)
 
   let rows: RawBankTransaction[] = []
+  let aiMeta: { model?: string; source?: string } = {}
   try {
-    if (format === 'mt940') rows = parseMt940(text)
-    else if (format === 'ofx') rows = parseOfx(text)
-    else rows = parseCsvStatement(text, KSA_BANK_PROFILES[profile] || KSA_BANK_PROFILES.GENERIC)
+    if (format === 'pdf') {
+      const parsed = await parsePdfStatementWithAi({
+        orgId,
+        userId: auth?.userId,
+        bankName: bank.bankName || bank.name,
+        currency: bank.currency,
+        fileBase64: fileBase64 || '',
+        fileName,
+        mimeType,
+      })
+      rows = parsed.rows
+      aiMeta = { model: parsed.model, source: parsed.source }
+    } else if (format === 'mt940') rows = parseMt940(text || '')
+    else if (format === 'ofx') rows = parseOfx(text || '')
+    else rows = parseCsvStatement(text || '', KSA_BANK_PROFILES[profile] || KSA_BANK_PROFILES.GENERIC)
   } catch (e: any) {
-    return c.json({ error: 'parse_failed', message: e?.message || 'unknown' }, 400)
+    return c.json({
+      error: e?.message || 'parse_failed',
+      message: e?.detail || e?.message || 'unknown',
+      triedModels: e?.triedModels,
+    }, e?.status || 400)
   }
 
   if (rows.length === 0) {
@@ -117,6 +304,7 @@ bankImportRoutes.post('/parse', zValidator('json', parseSchema), async (c) => {
     matched,
     unmatched: enriched.length - matched,
     bankAccount: { id: bank.id, name: bank.name, currency: bank.currency },
+    ai: aiMeta,
   })
 })
 

@@ -10,7 +10,7 @@ import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { prisma } from '../db.js'
-import { nextContactCode } from '../lib/numbering.js'
+import { nextContactCode, nextContactShortCode, normalizeContactShortCode } from '../lib/numbering.js'
 import { isOpenRouterModelIssue, openRouterVisionModels } from '../lib/openrouter-models.js'
 
 export const contactsRoutes = new Hono()
@@ -18,6 +18,8 @@ export const contactsRoutes = new Hono()
 const contactSchema = z.object({
   // User-facing custom code (auto-generated if blank)
   customCode: z.string().optional().nullable(),
+  // 1-4 char editable contact code used by numbering tokens, e.g. SNBL.
+  shortCode: z.string().optional().nullable(),
   // Legacy enum (kept · derived from flags if not provided)
   type: z.enum(['CUSTOMER', 'SUPPLIER', 'BOTH']).optional(),
   // Multi-role flags (UX-46)
@@ -98,6 +100,8 @@ contactsRoutes.get('/', async (c) => {
     where.OR = [
       { displayName: { contains: q, mode: 'insensitive' } },
       { legalName: { contains: q, mode: 'insensitive' } },
+      { customCode: { contains: q, mode: 'insensitive' } },
+      { shortCode: { contains: q.toUpperCase(), mode: 'insensitive' } },
       { email: { contains: q, mode: 'insensitive' } },
       { phone: { contains: q } },
       { taxId: { contains: q } },
@@ -157,10 +161,28 @@ contactsRoutes.post('/', zValidator('json', contactSchema), async (c) => {
     try { customCode = await nextContactCode(orgId) } catch { /* fall back · leave null */ }
   }
 
+  let shortCode: string | null = null
+  try {
+    shortCode = await nextContactShortCode({
+      orgId,
+      displayName: data.displayName,
+      requested: data.shortCode,
+    })
+  } catch (e: any) {
+    if (e?.message === 'short_code_too_long') {
+      return c.json({ error: 'short_code_too_long', message: 'رمز العميل/المورد يجب ألا يتجاوز 4 أحرف أو أرقام.' }, 400)
+    }
+    if (e?.message === 'short_code_already_exists') {
+      return c.json({ error: 'short_code_already_exists', message: 'رمز العميل/المورد مستخدم مسبقاً داخل هذه الشركة.' }, 409)
+    }
+    throw e
+  }
+
   const contact = await prisma.contact.create({
     data: {
       ...data,
       customCode,
+      shortCode,
       type: type!,
       isCustomer: isCustomer!,
       isSupplier: isSupplier!,
@@ -174,8 +196,10 @@ contactsRoutes.post('/', zValidator('json', contactSchema), async (c) => {
 // GET /contacts/_/next-code · returns the next auto-suggested customCode (used by UI before submit)
 contactsRoutes.get('/_/next-code', async (c) => {
   const orgId = c.get('orgId') as string
+  const displayName = c.req.query('displayName') || 'Contact'
   const code = await nextContactCode(orgId)
-  return c.json({ customCode: code })
+  const shortCode = await nextContactShortCode({ orgId, displayName })
+  return c.json({ customCode: code, shortCode })
 })
 
 // POST /contacts/_/extract-from-document · AI reads a CR / EIN letter / Articles
@@ -327,6 +351,29 @@ contactsRoutes.patch('/:id', zValidator('json', contactSchema.partial()), async 
 
   // Keep type ↔ flags in sync if either side changes
   const patch: any = { ...data }
+  if (data.shortCode !== undefined) {
+    try {
+      patch.shortCode = data.shortCode === null
+        ? null
+        : await nextContactShortCode({
+            orgId,
+            displayName: data.displayName || exists.displayName,
+            requested: data.shortCode,
+            excludeId: id,
+          })
+    } catch (e: any) {
+      if (e?.message === 'short_code_too_long') {
+        return c.json({ error: 'short_code_too_long', message: 'رمز العميل/المورد يجب ألا يتجاوز 4 أحرف أو أرقام.' }, 400)
+      }
+      if (e?.message === 'short_code_already_exists') {
+        return c.json({ error: 'short_code_already_exists', message: 'رمز العميل/المورد مستخدم مسبقاً داخل هذه الشركة.' }, 409)
+      }
+      throw e
+    }
+  } else if (!exists.shortCode && data.displayName) {
+    patch.shortCode = normalizeContactShortCode(await nextContactShortCode({ orgId, displayName: data.displayName, excludeId: id }))
+  }
+
   const newIsCustomer = data.isCustomer ?? exists.isCustomer
   const newIsSupplier = data.isSupplier ?? exists.isSupplier
   if (data.isCustomer !== undefined || data.isSupplier !== undefined) {

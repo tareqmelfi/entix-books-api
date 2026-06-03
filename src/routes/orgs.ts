@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { requireAuth } from '../auth.js'
 import { prisma } from '../db.js'
 import { resetCompanyData, seedCompanyDefaults } from '../lib/company-reset.js'
+import { findUnsupportedNumberingTokens, hasLegacyPlaceholder, SUPPORTED_NUMBERING_TOKENS } from '../lib/numbering.js'
 
 export const orgsRoutes = new Hono()
 
@@ -144,12 +145,35 @@ const numberingPerKindSchema = z.object({
   start: z.number().int().min(1).optional(),
 })
 const numberingSchema = z.object({
+  entityCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{1,4}$/).optional(),
   contact: numberingPerKindSchema.optional(),
   invoice: numberingPerKindSchema.optional(),
   quote: numberingPerKindSchema.optional(),
   bill: numberingPerKindSchema.optional(),
   receipt: numberingPerKindSchema.optional(),
   payment: numberingPerKindSchema.optional(),
+}).superRefine((settings, ctx) => {
+  for (const kind of ['contact', 'invoice', 'quote', 'bill', 'receipt', 'payment'] as const) {
+    const prefix = settings[kind]?.prefix
+    if (!prefix) continue
+
+    if (hasLegacyPlaceholder(prefix)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [kind, 'prefix'],
+        message: 'Do not use XXXX as a literal placeholder. Use {CLIENT}, {VENDOR}, {PROJECT}, or {ENTITY}.',
+      })
+    }
+
+    const unsupported = findUnsupportedNumberingTokens(prefix)
+    if (unsupported.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [kind, 'prefix'],
+        message: `Unsupported token(s): ${unsupported.join(', ')}. Supported: ${SUPPORTED_NUMBERING_TOKENS.map((x) => `{${x}}`).join(', ')}`,
+      })
+    }
+  }
 })
 
 orgsRoutes.patch('/:id', zValidator('json', updateOrgSchema), async (c) => {

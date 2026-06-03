@@ -15,7 +15,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
 import { resolveAiKey, logAiUsage, estimateCost, QuotaExceededError, DisabledByAdminError } from '../lib/ai-billing.js'
 import { isOpenRouterModelIssue, openRouterAgentModels } from '../lib/openrouter-models.js'
-import { nextContactCode } from '../lib/numbering.js'
+import { nextContactCode, nextContactShortCode } from '../lib/numbering.js'
 import {
   bankStatementBlockedResponse,
   detectBankStatement,
@@ -445,13 +445,21 @@ async function executeTool(name: string, args: any, orgId: string, userId?: stri
         ]
       }
       const items = await prisma.contact.findMany({ where, take: 50, orderBy: { displayName: 'asc' } })
-      return { count: items.length, items: items.map((c) => ({ id: c.id, name: c.displayName, email: c.email, phone: c.phone, type: c.type, taxId: c.taxId, vatNumber: c.vatNumber })) }
+      return { count: items.length, items: items.map((c) => ({ id: c.id, name: c.displayName, customCode: c.customCode, shortCode: c.shortCode, email: c.email, phone: c.phone, type: c.type, taxId: c.taxId, vatNumber: c.vatNumber })) }
     }
     case 'create_contact': {
+      let customCode: string | null = null
+      try { customCode = await nextContactCode(orgId) } catch { customCode = null }
+      let shortCode: string | null = null
+      try { shortCode = await nextContactShortCode({ orgId, displayName: args.displayName }) } catch { shortCode = null }
       const c = await prisma.contact.create({
         data: {
           orgId,
+          customCode,
+          shortCode,
           type: args.type,
+          isCustomer: args.type === 'CUSTOMER' || args.type === 'BOTH',
+          isSupplier: args.type === 'SUPPLIER' || args.type === 'BOTH',
           displayName: args.displayName,
           email: args.email || null,
           phone: args.phone || null,
@@ -461,7 +469,7 @@ async function executeTool(name: string, args: any, orgId: string, userId?: stri
           country: args.country || 'SA',
         },
       })
-      return { id: c.id, name: c.displayName, type: c.type }
+      return { id: c.id, name: c.displayName, type: c.type, customCode: c.customCode, shortCode: c.shortCode }
     }
     case 'list_expenses': {
       const where: any = { orgId }
@@ -532,10 +540,13 @@ async function executeTool(name: string, args: any, orgId: string, userId?: stri
         } else if (vendorName) {
           let customCode: string | null = null
           try { customCode = await nextContactCode(orgId) } catch { customCode = null }
+          let shortCode: string | null = null
+          try { shortCode = await nextContactShortCode({ orgId, displayName: vendorName }) } catch { shortCode = null }
           const created = await prisma.contact.create({
             data: {
               orgId,
               customCode,
+              shortCode,
               type: 'SUPPLIER',
               isCustomer: false,
               isSupplier: true,
@@ -612,10 +623,13 @@ async function executeTool(name: string, args: any, orgId: string, userId?: stri
       if (!contactId) {
         let customCode: string | null = null
         try { customCode = await nextContactCode(orgId) } catch { customCode = null }
+        let shortCode: string | null = null
+        try { shortCode = await nextContactShortCode({ orgId, displayName: supplierName }) } catch { shortCode = null }
         const supplier = await prisma.contact.create({
           data: {
             orgId,
             customCode,
+            shortCode,
             type: 'SUPPLIER',
             isCustomer: false,
             isSupplier: true,

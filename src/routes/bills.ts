@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
+import { nextBillNumber } from '../lib/numbering.js'
 
 export const billsRoutes = new Hono()
 
@@ -57,18 +58,6 @@ async function calcTotals(lines: z.infer<typeof lineSchema>[], orgId: string) {
   }
 }
 
-async function nextBillNumber(orgId: string): Promise<string> {
-  const year = new Date().getFullYear()
-  const prefix = `BILL-${year}-`
-  const last = await prisma.bill.findFirst({
-    where: { orgId, billNumber: { startsWith: prefix } },
-    orderBy: { billNumber: 'desc' },
-    select: { billNumber: true },
-  })
-  const lastNum = last ? Number(last.billNumber.split('-').pop() || '0') : 0
-  return `${prefix}${String(lastNum + 1).padStart(4, '0')}`
-}
-
 billsRoutes.get('/', async (c) => {
   const orgId = c.get('orgId')
   const status = c.req.query('status')
@@ -104,7 +93,7 @@ billsRoutes.post('/', zValidator('json', billSchema), async (c) => {
   const contact = await prisma.contact.findFirst({ where: { id: data.contactId, orgId } })
   if (!contact) return c.json({ error: 'invalid contact' }, 400)
   const totals = await calcTotals(data.lines, orgId)
-  const number = data.billNumber || (await nextBillNumber(orgId))
+  const number = data.billNumber || (await nextBillNumber(orgId, data.contactId))
   const bill = await prisma.bill.create({
     data: {
       orgId,

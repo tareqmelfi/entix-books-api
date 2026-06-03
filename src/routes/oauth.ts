@@ -42,7 +42,7 @@ const STATE_SECRET =
   'entix-oauth-fallback-DEV-ONLY'
 
 const STRIPE_CLIENT_ID = process.env.STRIPE_CLIENT_ID || '' // ca_xxx from Stripe Connect settings
-const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY || '' // sk_live_xxx (platform key)
+const STRIPE_SECRET = process.env.STRIPE_SECRET_KEY || process.env.STRIPE_API_KEY || '' // sk_live_xxx (platform key)
 const PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || ''
 const PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || ''
 const PAYPAL_MODE = (process.env.PAYPAL_MODE || 'live') as 'live' | 'sandbox'
@@ -363,20 +363,32 @@ oauthRoutes.get('/status', async (c) => {
     select: { paymentSettings: true },
   })
   const ps = (org?.paymentSettings as any) || {}
+  const stripeManual = !!ps?.stripe?.secretKey || !!ps?.stripe?.accessToken
+  const stripeServer = !!STRIPE_SECRET
+  const stripeOAuth = !!ps?.stripe?.connectedAccountId
+  const paypalManual = !!ps?.paypal?.clientId && !!ps?.paypal?.clientSecret
+  const paypalServer = !!PAYPAL_CLIENT_ID && !!PAYPAL_CLIENT_SECRET
+  const paypalOAuth = !!ps?.paypal?.merchantIdInPayPal
   return c.json({
     stripe: {
-      configured: !!STRIPE_CLIENT_ID,
-      connected: !!ps?.stripe?.connectedAccountId,
-      accountId: ps?.stripe?.connectedAccountId || null,
-      mode: ps?.stripe?.mode || null,
+      configured: !!STRIPE_CLIENT_ID || stripeManual || stripeServer,
+      connectConfigured: !!STRIPE_CLIENT_ID,
+      serverConfigured: stripeServer,
+      connected: stripeOAuth || stripeManual || stripeServer,
+      accountId: ps?.stripe?.connectedAccountId || (stripeServer ? 'server-managed' : null),
+      mode: ps?.stripe?.mode || (STRIPE_SECRET.startsWith('sk_test') ? 'test' : stripeServer ? 'live' : null),
       connectedAt: ps?.stripe?.connectedAt || null,
+      source: stripeOAuth ? 'oauth' : stripeManual ? 'manual' : stripeServer ? 'server' : null,
     },
     paypal: {
-      configured: !!PAYPAL_CLIENT_ID,
-      connected: !!ps?.paypal?.merchantIdInPayPal,
-      merchantId: ps?.paypal?.merchantIdInPayPal || null,
-      mode: ps?.paypal?.mode || null,
+      configured: paypalServer || paypalManual,
+      connectConfigured: paypalServer,
+      serverConfigured: paypalServer,
+      connected: paypalOAuth || paypalManual || paypalServer,
+      merchantId: ps?.paypal?.merchantIdInPayPal || (paypalServer ? 'server-managed' : null),
+      mode: ps?.paypal?.mode || (paypalServer ? PAYPAL_MODE : null),
       connectedAt: ps?.paypal?.connectedAt || null,
+      source: paypalOAuth ? 'oauth' : paypalManual ? 'manual' : paypalServer ? 'server' : null,
     },
     moyasar: {
       configured: true, // always available · paste flow

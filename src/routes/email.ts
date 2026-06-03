@@ -12,7 +12,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { requireAuth, requireOrg } from '../auth.js'
 import { prisma } from '../db.js'
-import { sendInvoiceEmail, sendQuoteEmail } from '../lib/email.js'
+import { getEmailHealth, sendInvoiceEmail, sendQuoteEmail } from '../lib/email.js'
 
 export const emailRoutes = new Hono()
 
@@ -22,6 +22,10 @@ const sendSchema = z.object({
   to: z.string().email().optional(),
   message: z.string().max(1000).optional(),
   payLink: z.string().url().optional(),
+})
+
+emailRoutes.get('/status', async (c) => {
+  return c.json(getEmailHealth())
 })
 
 emailRoutes.post('/invoices/:id/send', zValidator('json', sendSchema), async (c) => {
@@ -63,6 +67,7 @@ emailRoutes.post('/invoices/:id/send', zValidator('json', sendSchema), async (c)
     org: {
       name: (invoice as any).org?.name || 'Entix Books',
       taxId: (invoice as any).org?.taxId || null,
+      language: ((invoice as any).org?.defaultInvoiceLanguage === 'en' ? 'en' : 'ar') as 'ar' | 'en',
     },
     payLink: body.payLink,
     message: body.message,
@@ -116,6 +121,7 @@ emailRoutes.post('/quotes/:id/send', zValidator('json', sendSchema), async (c) =
     org: {
       name: (quote as any).org?.name || 'Entix Books',
       taxId: (quote as any).org?.taxId || null,
+      language: ((quote as any).org?.defaultInvoiceLanguage === 'en' ? 'en' : 'ar') as 'ar' | 'en',
     },
     acceptLink: body.payLink, // reuse field name in body for accept link
     message: body.message,

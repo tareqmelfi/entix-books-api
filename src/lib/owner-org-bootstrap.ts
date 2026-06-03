@@ -382,12 +382,13 @@ async function ensureOwnerOrg(tx: Tx, config: OwnerOrgConfig, userId: string, re
 
 function numberingSettings(prefix: string) {
   return {
-    contact: { prefix: `${prefix}-C-`, padding: 4, start: 1 },
-    invoice: { prefix: `${prefix}-INV-{YYYY}-`, padding: 4, start: 1 },
-    bill: { prefix: `${prefix}-BILL-{YYYY}-`, padding: 4, start: 1 },
-    quote: { prefix: `${prefix}-QT-{YYYY}-`, padding: 4, start: 1 },
-    receipt: { prefix: `${prefix}-R-{YYYY}-`, padding: 4, start: 1 },
-    payment: { prefix: `${prefix}-P-{YYYY}-`, padding: 4, start: 1 },
+    entityCode: prefix,
+    contact: { prefix: `${prefix}-CON-`, padding: 4, start: 1 },
+    invoice: { prefix: `${prefix}-INV-{YYYY}{MM}-`, padding: 4, start: 1 },
+    bill: { prefix: `${prefix}-BIL-{YYYY}{MM}-`, padding: 4, start: 1 },
+    quote: { prefix: `${prefix}-QTE-{YYYY}{MM}-`, padding: 4, start: 1 },
+    receipt: { prefix: `${prefix}-RCP-{YYYY}{MM}-`, padding: 4, start: 1 },
+    payment: { prefix: `${prefix}-RCP-{YYYY}{MM}-`, padding: 4, start: 1 },
   }
 }
 

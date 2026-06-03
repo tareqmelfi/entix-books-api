@@ -35,7 +35,7 @@ import { zatcaRoutes } from './routes/zatca.js'
 import { bankImportRoutes } from './routes/bank-import.js'
 import { currencyRoutes } from './routes/currency.js'
 import { fiscalPeriodsRoutes } from './routes/fiscal-periods.js'
-import { paymentLinksRoutes } from './routes/payment-links.js'
+import { paymentLinksRoutes, paymentLinksWebhookRoutes } from './routes/payment-links.js'
 import { portalRoutes, portalAdminRoutes } from './routes/portal.js'
 import { payrollRoutes } from './routes/payroll.js'
 import { inventoryRoutes } from './routes/inventory.js'
@@ -146,6 +146,10 @@ orgScoped.route('/plaid', plaidRoutes)
 orgScoped.route('/brokers', brokersRoutes)
 orgScoped.route('/inbox', inboxRoutes)
 orgScoped.route('/journals', journalsRoutes)
+
+// Payment provider webhooks are public. They must be mounted before /api orgScoped,
+// otherwise requireAuth/requireOrg blocks Stripe, PayPal, and Moyasar callbacks.
+app.route('/api/payment-links', paymentLinksWebhookRoutes)
 app.route('/api', orgScoped)
 
 // Inbound email webhook · public · validated by X-Inbox-Token header

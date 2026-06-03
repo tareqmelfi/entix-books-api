@@ -130,12 +130,13 @@ model Organization {
   suiteUnit              String? // Suite / Apt / Unit (US addresses)
   state                  String? // US state code (WY, CA, ...)
   /// Numbering preferences · JSON shape:
-  /// { contact: { prefix: "CUST-", padding: 4, start: 1, includeYear: false },
-  ///   invoice: { prefix: "INV-{YYYY}-", padding: 4, start: 1 },
-  ///   bill:    { prefix: "BILL-{YYYY}-", padding: 4 },
-  ///   quote:   { prefix: "QT-{YYYY}-", padding: 4 },
-  ///   receipt: { prefix: "R-{YYYY}-", padding: 4 },
-  ///   payment: { prefix: "P-{YYYY}-", padding: 4 } }
+  /// { entityCode: "EN",
+  ///   contact: { prefix: "EN-CON-", padding: 4, start: 1 },
+  ///   invoice: { prefix: "EN-INV-{YYYY}{MM}-", padding: 4, start: 1 },
+  ///   bill:    { prefix: "EN-BIL-{YYYY}{MM}-", padding: 4 },
+  ///   quote:   { prefix: "EN-QTE-{YYYY}{MM}-", padding: 4 },
+  ///   receipt: { prefix: "EN-RCP-{YYYY}{MM}-", padding: 4 },
+  ///   payment: { prefix: "EN-RCP-{YYYY}{MM}-", padding: 4 } }
   numberingSettings      Json?
   /// Payment provider settings (encrypted at rest in production):
   /// { stripe: { secretKey: "sk_...", publishableKey: "pk_...", enabled: true },
@@ -255,6 +256,8 @@ model Contact {
   orgId              String
   /// User-facing custom code (e.g. "EN-CLI-BSMA" or "CUST-001") · auto-generated from numberingSettings if null.
   customCode         String?
+  /// 1-4 char editable contact code used in document numbering tokens, e.g. SNBL.
+  shortCode          String?           @db.VarChar(4)
   /// Legacy enum · kept for backward compatibility · derived from role flags below.
   type               ContactType
   /// Multi-role flags · a Person can wear several hats simultaneously (UX-46).
@@ -320,6 +323,7 @@ model Contact {
 
   @@index([orgId])
   @@index([orgId, type])
+  @@unique([orgId, shortCode])
   @@index([orgId, isCustomer])
   @@index([orgId, isSupplier])
   @@index([orgId, isEmployee])

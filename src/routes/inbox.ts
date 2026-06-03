@@ -35,6 +35,13 @@ export const inboxWebhookRoutes = new Hono()
 // Authed · list / get / approve / reject / reprocess
 export const inboxRoutes = new Hono()
 
+function inboundAddressForSlug(slug: string) {
+  const configured = process.env.INBOUND_BILLS_EMAIL || ''
+  if (configured) return configured.replace('{slug}', slug)
+  const domain = process.env.INBOUND_EMAIL_DOMAIN || 'entix.io'
+  return `bills+${slug}@${domain}`
+}
+
 // ── Webhook (no auth · token-validated) ──────────────────────────────────────
 const webhookSchema = z.object({
   to: z.string(),                       // bills+<orgSlug>@entix.io
@@ -127,6 +134,26 @@ inboxRoutes.get('/', async (c) => {
       billId: m.billId,
     })),
     total: messages.length,
+  })
+})
+
+inboxRoutes.get('/status', async (c) => {
+  const orgId = c.get('orgId') as string
+  const org = await prisma.organization.findUnique({
+    where: { id: orgId },
+    select: { slug: true },
+  })
+  if (!org) return c.json({ error: 'org_not_found' }, 404)
+  const address = inboundAddressForSlug(org.slug)
+  const hasToken = !!process.env.INBOX_WEBHOOK_TOKEN
+  const hasAddressConfig = !!process.env.INBOUND_BILLS_EMAIL || !!process.env.INBOUND_EMAIL_DOMAIN
+  return c.json({
+    address,
+    configured: hasToken && hasAddressConfig,
+    webhookConfigured: hasToken,
+    addressConfigured: hasAddressConfig,
+    mode: hasToken && hasAddressConfig ? 'live' : 'setup-required',
+    provider: process.env.INBOUND_EMAIL_PROVIDER || null,
   })
 })
 

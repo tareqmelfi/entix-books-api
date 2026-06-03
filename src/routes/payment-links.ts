@@ -12,6 +12,12 @@ import { Hono } from 'hono'
 import { prisma } from '../db.js'
 
 export const paymentLinksRoutes = new Hono()
+export const paymentLinksWebhookRoutes = new Hono()
+
+const SERVER_STRIPE_SECRET = process.env.STRIPE_SECRET_KEY || process.env.STRIPE_API_KEY || ''
+const SERVER_PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || ''
+const SERVER_PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || ''
+const SERVER_PAYPAL_MODE = (process.env.PAYPAL_MODE || 'live') as 'live' | 'sandbox'
 
 interface PaymentSettings {
   stripe?: {
@@ -56,7 +62,7 @@ async function createStripeLink(secretKey: string, opts: {
 
 async function createPayPalLink(opts: {
   clientId: string; clientSecret: string; mode: 'live' | 'sandbox';
-  amount: number; currency: string; description: string; invoiceNumber: string;
+  amount: number; currency: string; description: string; invoiceNumber: string; invoiceId: string;
 }) {
   const base = opts.mode === 'live' ? 'https://api-m.paypal.com' : 'https://api-m.sandbox.paypal.com'
   // Get OAuth token
@@ -83,6 +89,7 @@ async function createPayPalLink(opts: {
       intent: 'CAPTURE',
       purchase_units: [{
         reference_id: opts.invoiceNumber,
+        custom_id: opts.invoiceId,
         description: opts.description.slice(0, 127),
         amount: { currency_code: opts.currency, value: opts.amount.toFixed(2) },
       }],
@@ -137,14 +144,21 @@ paymentLinksRoutes.post('/invoice/:id', async (c) => {
 
   const org = invoice.org
   const settings = (org.paymentSettings || {}) as PaymentSettings
+  const hasStripe = !!(settings.stripe?.enabled || settings.stripe?.accessToken || settings.stripe?.secretKey || SERVER_STRIPE_SECRET)
+  const hasPayPal = !!(
+    settings.paypal?.enabled ||
+    (settings.paypal?.clientId && settings.paypal?.clientSecret) ||
+    (SERVER_PAYPAL_CLIENT_ID && SERVER_PAYPAL_CLIENT_SECRET)
+  )
+  const hasMoyasar = !!(settings.moyasar?.enabled && settings.moyasar?.secretKey)
 
   // Auto-pick provider: prefer Moyasar for SAR, Stripe for USD/EUR, PayPal as fallback
   let chosen: 'stripe' | 'paypal' | 'moyasar' | null = null
   if (provider === 'auto') {
-    if (invoice.currency === 'SAR' && settings.moyasar?.enabled) chosen = 'moyasar'
-    else if (settings.stripe?.enabled) chosen = 'stripe'
-    else if (settings.paypal?.enabled) chosen = 'paypal'
-    else if (settings.moyasar?.enabled) chosen = 'moyasar'
+    if (invoice.currency === 'SAR' && hasMoyasar) chosen = 'moyasar'
+    else if (hasStripe) chosen = 'stripe'
+    else if (hasPayPal) chosen = 'paypal'
+    else if (hasMoyasar) chosen = 'moyasar'
   } else {
     chosen = provider
   }
@@ -158,7 +172,7 @@ paymentLinksRoutes.post('/invoice/:id', async (c) => {
   try {
     let result
     if (chosen === 'stripe') {
-      const stripeCredential = settings.stripe?.accessToken || settings.stripe?.secretKey
+      const stripeCredential = settings.stripe?.accessToken || settings.stripe?.secretKey || SERVER_STRIPE_SECRET
       if (!stripeCredential) {
         return c.json({
           error: 'stripe_not_configured',
@@ -170,14 +184,17 @@ paymentLinksRoutes.post('/invoice/:id', async (c) => {
         invoiceNumber: invoice.invoiceNumber, orgId, invoiceId: id,
       })
     } else if (chosen === 'paypal') {
-      if (!settings.paypal?.clientId || !settings.paypal?.clientSecret) {
+      const paypalClientId = settings.paypal?.clientId || SERVER_PAYPAL_CLIENT_ID
+      const paypalClientSecret = settings.paypal?.clientSecret || SERVER_PAYPAL_CLIENT_SECRET
+      if (!paypalClientId || !paypalClientSecret) {
         return c.json({ error: 'paypal_not_configured' }, 400)
       }
       result = await createPayPalLink({
-        clientId: settings.paypal.clientId, clientSecret: settings.paypal.clientSecret,
-        mode: settings.paypal.mode || 'live',
+        clientId: paypalClientId, clientSecret: paypalClientSecret,
+        mode: settings.paypal?.mode || SERVER_PAYPAL_MODE,
         amount: remaining, currency: invoice.currency, description,
         invoiceNumber: invoice.invoiceNumber,
+        invoiceId: id,
       })
     } else if (chosen === 'moyasar') {
       if (!settings.moyasar?.secretKey) return c.json({ error: 'moyasar_not_configured' }, 400)
@@ -222,7 +239,7 @@ paymentLinksRoutes.get('/invoice/:id', async (c) => {
 })
 
 // Webhook receivers — public, no auth (provider signs the request)
-paymentLinksRoutes.post('/webhook/:provider', async (c) => {
+paymentLinksWebhookRoutes.post('/webhook/:provider', async (c) => {
   const provider = c.req.param('provider')
   const body = await c.req.json().catch(() => ({}))
 

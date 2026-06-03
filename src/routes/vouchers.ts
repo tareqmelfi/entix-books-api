@@ -11,6 +11,7 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
 import { createNotification } from './notifications.js'
+import { nextVoucherNumber } from '../lib/numbering.js'
 
 export const vouchersRoutes = new Hono()
 
@@ -33,18 +34,6 @@ const voucherSchema = z.object({
   costCenterId: z.string().optional().nullable(),
   attachmentUrl: z.string().url().optional().nullable().or(z.literal('').transform(() => null)),
 })
-
-async function nextVoucherNumber(orgId: string, type: 'RECEIPT' | 'PAYMENT'): Promise<string> {
-  const year = new Date().getFullYear()
-  const prefix = type === 'RECEIPT' ? `R-${year}-` : `P-${year}-`
-  const last = await prisma.voucher.findFirst({
-    where: { orgId, type, number: { startsWith: prefix } },
-    orderBy: { number: 'desc' },
-    select: { number: true },
-  })
-  const lastNum = last ? Number(last.number.split('-').pop() || '0') : 0
-  return `${prefix}${String(lastNum + 1).padStart(4, '0')}`
-}
 
 vouchersRoutes.get('/', async (c) => {
   const orgId = c.get('orgId')
@@ -132,7 +121,7 @@ vouchersRoutes.post('/', zValidator('json', voucherSchema), async (c) => {
     return c.json({ error: 'advance_with_link', message: 'الدفعة المقدمة لا تُربط بفاتورة أو سند مشتريات · أزل الربط أو ألغِ الـadvance' }, 400)
   }
 
-  const number = data.number || (await nextVoucherNumber(orgId, data.type))
+  const number = data.number || (await nextVoucherNumber(orgId, data.type, data.contactId))
 
   const voucher = await prisma.$transaction(async (tx) => {
     const v = await tx.voucher.create({

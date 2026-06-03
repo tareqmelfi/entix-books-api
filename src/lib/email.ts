@@ -28,8 +28,19 @@ interface SendArgs {
   attachments?: Array<{ filename: string; content: string }> // base64
 }
 
+export function getEmailHealth() {
+  return {
+    configured: !!RESEND_API_KEY,
+    mode: RESEND_API_KEY ? 'live' : process.env.NODE_ENV === 'production' ? 'missing-provider' : 'dry-run',
+    from: EMAIL_FROM,
+  }
+}
+
 export async function sendEmail(args: SendArgs): Promise<{ ok: boolean; id?: string; error?: string }> {
   if (!RESEND_API_KEY) {
+    if (process.env.NODE_ENV === 'production') {
+      return { ok: false, error: 'email_provider_not_configured: set RESEND_API_KEY and EMAIL_FROM' }
+    }
     console.warn('[email] RESEND_API_KEY not set · dry-run mode')
     console.log('[email] Would send to:', args.to, 'subject:', args.subject)
     return { ok: true, id: 'dry-run' }
@@ -95,6 +106,7 @@ interface OrgPayload {
   name?: string
   taxId?: string | null
   logoUrl?: string | null
+  language?: 'ar' | 'en' | null
 }
 
 function escapeHtml(s: string | undefined | null): string {
@@ -122,8 +134,14 @@ function htmlShell(args: {
   org?: OrgPayload
 }) {
   const orgName = escapeHtml(args.org?.name || 'Entix Books')
+  const language = args.org?.language === 'en' ? 'en' : 'ar'
+  const dir = language === 'en' ? 'ltr' : 'rtl'
+  const align = language === 'en' ? 'left' : 'right'
+  const footer = language === 'en'
+    ? `This email was sent by ${orgName} through Entix Books. If you received it by mistake, you can ignore it.`
+    : `هذا البريد تم إرساله من ${orgName} عبر Entix Books. إذا وصلك بالخطأ، يمكنك تجاهله.`
   return `<!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="${language}" dir="${dir}">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -143,7 +161,7 @@ function htmlShell(args: {
             <td style="background:linear-gradient(135deg,#0B1B49 0%,#1276E3 100%); padding:24px 28px;">
               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
                 <tr>
-                  <td align="right">
+                  <td align="${align}">
                     <span style="color:#FFFFFF; font-size:20px; font-weight:700; letter-spacing:-0.3px;">${orgName}</span>
                   </td>
                 </tr>
@@ -169,7 +187,7 @@ function htmlShell(args: {
           <tr>
             <td style="background:#F9FAFB; padding:20px 28px; border-top:1px solid #E5E7EB;">
               <p style="margin:0; color:#6B7280; font-size:12px; line-height:1.6;">
-                هذا البريد تم إرساله من ${orgName} عبر Entix Books. إذا وصلك بالخطأ، يمكنك تجاهله.
+                ${footer}
               </p>
               <p style="margin:8px 0 0 0; color:#9CA3AF; font-size:11px;">
                 © ${new Date().getFullYear()} ENSIDEX LLC · Wyoming, United States · entix.io
@@ -209,6 +227,31 @@ function linesTable(lines: DocLine[] | undefined, currency: string) {
   </table>`
 }
 
+function linesTableEn(lines: DocLine[] | undefined, currency: string) {
+  if (!lines || lines.length === 0) return ''
+  const rows = lines.map((l) => {
+    const total = l.total !== undefined ? Number(l.total) : Number(l.quantity) * Number(l.unitPrice)
+    return `<tr>
+      <td style="padding:10px 12px; border-bottom:1px solid #F3F4F6; font-size:14px; color:#374151;">${escapeHtml(l.description)}</td>
+      <td style="padding:10px 12px; border-bottom:1px solid #F3F4F6; font-size:14px; color:#374151; text-align:right; direction:ltr;">${Number(l.quantity).toLocaleString()}</td>
+      <td style="padding:10px 12px; border-bottom:1px solid #F3F4F6; font-size:14px; color:#374151; text-align:right; direction:ltr;">${fmt(l.unitPrice, currency)}</td>
+      <td style="padding:10px 12px; border-bottom:1px solid #F3F4F6; font-size:14px; color:#0B1B49; font-weight:600; text-align:right; direction:ltr;">${fmt(total, currency)}</td>
+    </tr>`
+  }).join('')
+  return `
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:16px; border:1px solid #E5E7EB; border-radius:8px; overflow:hidden;">
+    <thead>
+      <tr style="background:#F9FAFB;">
+        <th style="padding:10px 12px; text-align:left; font-size:12px; color:#6B7280; font-weight:600;">Description</th>
+        <th style="padding:10px 12px; text-align:right; font-size:12px; color:#6B7280; font-weight:600;">Qty</th>
+        <th style="padding:10px 12px; text-align:right; font-size:12px; color:#6B7280; font-weight:600;">Price</th>
+        <th style="padding:10px 12px; text-align:right; font-size:12px; color:#6B7280; font-weight:600;">Total</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>`
+}
+
 // ─── Public API ───────────────────────────────────────────────────────────────
 
 export async function sendInvoiceEmail(opts: {
@@ -221,8 +264,46 @@ export async function sendInvoiceEmail(opts: {
 }) {
   const { invoice, customer, org } = opts
   const currency = invoice.currency || 'SAR'
+  const language = org?.language === 'en' ? 'en' : 'ar'
   const customMessage = opts.message ? `<p style="margin:0 0 16px 0; color:#374151; font-size:15px; line-height:1.7;">${escapeHtml(opts.message)}</p>` : ''
-  const bodyHtml = `
+  const bodyHtml = language === 'en' ? `
+    <h1 style="margin:0 0 8px 0; color:#0B1B49; font-size:24px; font-weight:700;">New invoice from ${escapeHtml(org?.name || 'Entix Books')}</h1>
+    <p style="margin:0 0 24px 0; color:#6B7280; font-size:14px;">Invoice number: <span style="font-weight:600; color:#1276E3;">${escapeHtml(invoice.number)}</span></p>
+    ${customMessage}
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:16px;">
+      <tr>
+        <td style="padding:12px 14px; background:#F4FCFF; border-radius:8px;">
+          <div style="font-size:12px; color:#6B7280; margin-bottom:4px;">Customer</div>
+          <div style="font-size:14px; color:#0B1B49; font-weight:600;">${escapeHtml(customer.displayName)}</div>
+          ${customer.taxId ? `<div style="font-size:12px; color:#6B7280; direction:ltr;">Tax ID: ${escapeHtml(customer.taxId)}</div>` : ''}
+        </td>
+      </tr>
+    </table>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr>
+        <td style="width:50%; padding:8px 0; vertical-align:top;">
+          <div style="font-size:12px; color:#6B7280;">Issue date</div>
+          <div style="font-size:14px; color:#0B1B49; direction:ltr;">${escapeHtml(invoice.issueDate?.slice(0, 10) || '—')}</div>
+        </td>
+        <td style="width:50%; padding:8px 0; vertical-align:top;">
+          <div style="font-size:12px; color:#6B7280;">Due date</div>
+          <div style="font-size:14px; color:#0B1B49; direction:ltr;">${escapeHtml(invoice.dueDate?.slice(0, 10) || '—')}</div>
+        </td>
+      </tr>
+    </table>
+    ${linesTableEn(invoice.lines, currency)}
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:16px;">
+      <tr>
+        <td align="right" style="padding:14px; background:#0B1B49; border-radius:8px;">
+          <div style="color:#94A3B8; font-size:12px; margin-bottom:4px;">Amount due</div>
+          <div style="color:#FFFFFF; font-size:22px; font-weight:700; direction:ltr;">${fmt(invoice.total, currency)}</div>
+        </td>
+      </tr>
+    </table>
+    ${invoice.notes ? `<div style="margin-top:16px; padding:12px 14px; background:#F9FAFB; border-radius:8px; border-left:3px solid #1276E3;">
+      <div style="font-size:12px; color:#6B7280; margin-bottom:4px;">Notes</div>
+      <div style="font-size:13px; color:#374151; white-space:pre-wrap;">${escapeHtml(invoice.notes)}</div>
+    </div>` : ''}` : `
     <h1 style="margin:0 0 8px 0; color:#0B1B49; font-size:24px; font-weight:700;">فاتورة جديدة من ${escapeHtml(org?.name || 'Entix Books')}</h1>
     <p style="margin:0 0 24px 0; color:#6B7280; font-size:14px;">رقم الفاتورة: <span style="font-weight:600; color:#1276E3;">${escapeHtml(invoice.number)}</span></p>
     ${customMessage}
@@ -260,15 +341,22 @@ export async function sendInvoiceEmail(opts: {
       <div style="font-size:12px; color:#6B7280; margin-bottom:4px;">ملاحظات</div>
       <div style="font-size:13px; color:#374151; white-space:pre-wrap;">${escapeHtml(invoice.notes)}</div>
     </div>` : ''}`
+  const subject = language === 'en'
+    ? `Invoice ${invoice.number} from ${org?.name || 'Entix Books'}`
+    : `فاتورة ${invoice.number} من ${org?.name || 'Entix Books'}`
+  const title = language === 'en' ? `Invoice ${invoice.number}` : `فاتورة ${invoice.number}`
+  const preheader = language === 'en'
+    ? `Invoice for ${fmt(invoice.total, currency)} due ${invoice.dueDate?.slice(0, 10) || ''}`
+    : `فاتورة بقيمة ${fmt(invoice.total, currency)} مستحقة في ${invoice.dueDate?.slice(0, 10) || ''}`
   return sendEmail({
     to: opts.to,
-    subject: `فاتورة ${invoice.number} من ${org?.name || 'Entix Books'}`,
+    subject,
     html: htmlShell({
-      title: `فاتورة ${invoice.number}`,
-      preheader: `فاتورة بقيمة ${fmt(invoice.total, currency)} مستحقة في ${invoice.dueDate?.slice(0, 10) || ''}`,
+      title,
+      preheader,
       bodyHtml,
       ctaUrl: opts.payLink,
-      ctaLabel: opts.payLink ? 'دفع الفاتورة' : undefined,
+      ctaLabel: opts.payLink ? (language === 'en' ? 'Pay invoice' : 'دفع الفاتورة') : undefined,
       org,
     }),
   })

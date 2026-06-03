@@ -3,7 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
-import { nextContactCode } from '../lib/numbering.js'
+import { nextContactCode, nextContactShortCode } from '../lib/numbering.js'
 import {
   bankStatementBlockedResponse,
   detectBankStatement,
@@ -158,10 +158,13 @@ async function resolveExpenseContact(
 
   let customCode: string | null = null
   try { customCode = await nextContactCode(orgId) } catch { customCode = null }
+  let shortCode: string | null = null
+  try { shortCode = await nextContactShortCode({ orgId, displayName: vendorName }) } catch { shortCode = null }
   const created = await prisma.contact.create({
     data: {
       orgId,
       customCode,
+      shortCode,
       type: 'SUPPLIER',
       isCustomer: false,
       isSupplier: true,

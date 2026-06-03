@@ -13,6 +13,7 @@
     "prisma:dev-migrate": "prisma migrate dev",
     "seed:demo": "tsx src/scripts/seed-demo.ts",
     "seed:demo:reset": "tsx src/scripts/seed-demo.ts $1 --reset",
+    "upsert:snbl-invoice": "tsx src/scripts/upsert-snbl-stripe-invoice.ts",
     "bootstrap:owner-orgs": "tsx src/scripts/ensure-owner-orgs.ts",
     "bootstrap:owner-orgs:dry-run": "tsx src/scripts/ensure-owner-orgs.ts --dry-run"
   },
