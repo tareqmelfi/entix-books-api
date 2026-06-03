@@ -74,6 +74,13 @@ Rules:
 - Arabic text: keep in Arabic · don't translate
 - Currency: infer from symbol/text · default SAR if Saudi VAT pattern (300xxx) detected
 - If unsure: null + warning · DO NOT invent
+- Classification matters:
+  - RECEIPT = paid receipt / cash-card expense evidence.
+  - BILL or INVOICE = supplier/vendor purchase invoice or payable document. Use this when the document asks the business to pay a supplier and does not clearly show it was already paid.
+  - CONTRACT = agreement, contract, warranty, engagement letter, or legal/commercial terms. Never force it into an expense.
+  - STATEMENT = only a real bank/account statement with account identifiers, balances, or transaction rows. Do not use STATEMENT for screenshots of dashboards, reports, or app pages.
+  - OTHER = screenshots, app UI, unclear documents, certificates, letters, or anything that is not directly registerable.
+- If the uploaded file is a screenshot of Entix/app/dashboard/table/list, classify it as OTHER unless it contains a clear source invoice/receipt/contract inside the image.
 - For Saudi tax invoices, vendorVat is critical. Extract 15-digit VAT/tax IDs from labels like الرقم الضريبي, VAT Number, Tax Number. Prefer vendor tax ID over buyer tax ID.
 - documentNumber is critical. Extract invoice/receipt number from labels like رقم الفاتورة, رقم الإيصال, invoice no, receipt no, bill no, ref. Do NOT use terminal ID, authorization code, cashier number, commercial registration, VAT number, or card number as documentNumber.
 - Never collapse visible line items into only a total. If rows/items are visible, preserve each item with description, quantity, unitPrice, taxRate, subtotal. If the receipt repeats the same item in separate rows, keep separate rows unless the receipt explicitly groups them.

@@ -8,9 +8,19 @@ import {
 test('statement-like extraction is detected and blocked', () => {
   const result = detectBankStatement({
     extracted: { docType: 'STATEMENT', total: 1250, confidence: 0.9 },
+    text: 'Account Statement\nAccount number SA1234567890123456789012\nOpening balance 100\n2026-05-01 credit 200 balance 300\n2026-05-02 debit 50 balance 250\n2026-05-03 debit 25 balance 225\nClosing balance 225',
   })
 
   assert.equal(result.isBankStatement, true)
+})
+
+test('generic statement classification without bank structure is not blocked', () => {
+  const result = detectBankStatement({
+    extracted: { docType: 'STATEMENT', vendor: 'ENTIX.IO', total: 283436.99, confidence: 0.8 },
+    text: 'Screenshot of an expenses dashboard table',
+  })
+
+  assert.equal(result.isBankStatement, false)
 })
 
 test('Arabic bank statement filename and text are detected', () => {

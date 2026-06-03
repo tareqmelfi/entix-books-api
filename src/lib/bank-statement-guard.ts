@@ -104,10 +104,13 @@ export function detectBankStatement(input: BankStatementGuardInput = {}): BankSt
     extracted?.kind,
   ]
 
+  let genericStatementClassification: string | null = null
   for (const value of classificationFields) {
     const normalized = normalizeClassifier(value)
-    if (['bankstatement', 'statement', 'accountstatement'].includes(normalized)) {
+    if (['bankstatement', 'accountstatement'].includes(normalized)) {
       addReason(reasons, `classification:${String(value)}`)
+    } else if (normalized === 'statement') {
+      genericStatementClassification = String(value)
     }
   }
 
@@ -122,12 +125,19 @@ export function detectBankStatement(input: BankStatementGuardInput = {}): BankSt
     ...collectStrings(extracted),
   ].filter(Boolean).join('\n')
 
-  if (combinedText && hasStatementPhrase(combinedText)) {
+  const hasExplicitStatementPhrase = combinedText ? hasStatementPhrase(combinedText) : false
+  const hasRealStatementStructure = combinedText ? hasBankStatementStructure(combinedText, extracted) : false
+
+  if (combinedText && hasExplicitStatementPhrase) {
     addReason(reasons, 'statement_phrase')
   }
 
-  if (combinedText && hasBankStatementStructure(combinedText, extracted)) {
+  if (combinedText && hasRealStatementStructure) {
     addReason(reasons, 'bank_statement_structure')
+  }
+
+  if (genericStatementClassification && (hasExplicitStatementPhrase || hasRealStatementStructure)) {
+    addReason(reasons, `classification:${genericStatementClassification}`)
   }
 
   return { isBankStatement: reasons.length > 0, reasons }

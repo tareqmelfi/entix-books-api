@@ -239,9 +239,11 @@ Rules:
 - After every action: summarize what you did and the result
 - Numbers: SAR (default) · respect org's base currency
 - Arabic-first · use English when user prompts in English
-- If user uploads an image · use ocr_extract first then create_expense or create_invoice
-- When recording an expense from OCR, preserve documentNumber, supplierTaxId/vendorVat, lineItems, paymentSplits, and duplicate warnings. Do not reduce a tax invoice to only amount.
+- If user uploads an image · use OCR first, then choose the accounting route: create_expense for paid receipts/cash-card spend, create_bill for supplier purchase invoices/payables, and never treat contracts or statements as expenses.
+- Difference: purchase bill/invoice = supplier payable document, possibly unpaid. Expense = paid cash/card/bank spend. Explain this when the user asks.
+- When recording an expense or bill from OCR, preserve documentNumber, supplierTaxId/vendorVat, lineItems, paymentSplits, and duplicate warnings. Do not reduce a tax invoice to only amount.
 - A bank statement is not an expense. Never create expenses, vouchers, journal entries, or GL postings from bank statements. Route them to bank statement review/staging.
+- Screenshots of Entix dashboards/lists are context for analysis, not source financial documents to auto-register.
 - Be concise · 2-4 sentences usually enough · use tables for lists
 - If a tool fails · explain why and suggest alternative`
 
@@ -355,6 +357,40 @@ const TOOLS = [
         type: 'object',
         properties: {
           status: { type: 'string', enum: ['DRAFT', 'SENT', 'PAID', 'OVERDUE', 'CANCELLED'] },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'create_bill',
+      description: 'Create a supplier purchase bill/invoice draft for accounts payable. Use this for unpaid supplier invoices, not paid receipts.',
+      parameters: {
+        type: 'object',
+        required: ['supplierName', 'issueDate', 'amount'],
+        properties: {
+          supplierName: { type: 'string' },
+          supplierTaxId: { type: 'string' },
+          billNumber: { type: 'string' },
+          documentNumber: { type: 'string' },
+          issueDate: { type: 'string', description: 'YYYY-MM-DD' },
+          dueDate: { type: 'string', description: 'YYYY-MM-DD' },
+          amount: { type: 'number' },
+          taxAmount: { type: 'number' },
+          currency: { type: 'string' },
+          notes: { type: 'string' },
+          lines: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                description: { type: 'string' },
+                quantity: { type: 'number' },
+                unitPrice: { type: 'number' },
+              },
+            },
+          },
         },
       },
     },
@@ -553,6 +589,101 @@ async function executeTool(name: string, args: any, orgId: string, userId?: stri
         },
       })
       return { id: e.id, number: e.number, documentNumber: e.documentNumber, total: Number(e.total), category: e.category, duplicateExpense: duplicate }
+    }
+    case 'create_bill': {
+      const supplierName = typeof args.supplierName === 'string' ? args.supplierName.trim() : ''
+      if (!supplierName) return { error: 'supplierName_required' }
+      const supplierTaxId = typeof args.supplierTaxId === 'string' ? args.supplierTaxId.replace(/[^\dA-Za-z]/g, '') : ''
+      const existing = await prisma.contact.findFirst({
+        where: {
+          orgId,
+          isActive: true,
+          OR: [
+            ...(supplierTaxId ? [{ taxId: { equals: supplierTaxId } }, { vatNumber: { equals: supplierTaxId } }] : []),
+            { displayName: { equals: supplierName, mode: 'insensitive' as const } },
+          ],
+        },
+        select: { id: true, isSupplier: true, isCustomer: true },
+      })
+      let contactId = existing?.id || null
+      if (existing && !existing.isSupplier) {
+        await prisma.contact.update({ where: { id: existing.id }, data: { isSupplier: true, type: existing.isCustomer ? 'BOTH' : 'SUPPLIER' } })
+      }
+      if (!contactId) {
+        let customCode: string | null = null
+        try { customCode = await nextContactCode(orgId) } catch { customCode = null }
+        const supplier = await prisma.contact.create({
+          data: {
+            orgId,
+            customCode,
+            type: 'SUPPLIER',
+            isCustomer: false,
+            isSupplier: true,
+            entityKind: 'COMPANY',
+            displayName: supplierName,
+            legalName: supplierName,
+            taxId: supplierTaxId || null,
+            vatNumber: supplierTaxId || null,
+            country: 'SA',
+            defaultCurrency: args.currency || 'SAR',
+            notes: 'Auto-created by AI assistant purchase bill entry.',
+          },
+          select: { id: true },
+        })
+        contactId = supplier.id
+      }
+
+      const year = new Date().getFullYear()
+      const prefix = `BILL-${year}-`
+      const last = await prisma.bill.findFirst({ where: { orgId, billNumber: { startsWith: prefix } }, orderBy: { billNumber: 'desc' }, select: { billNumber: true } })
+      const nextNumber = `${prefix}${String((last ? Number(last.billNumber.split('-').pop() || '0') : 0) + 1).padStart(4, '0')}`
+      const billNumber = args.billNumber || args.documentNumber || nextNumber
+      const amount = Number(args.amount || 0)
+      const taxAmount = Number(args.taxAmount || 0)
+      const total = Math.max(amount + taxAmount, 0)
+      const rawLines = Array.isArray(args.lines) && args.lines.length > 0
+        ? args.lines
+        : [{ description: args.notes || args.documentNumber || 'Purchase bill', quantity: 1, unitPrice: total || amount }]
+      let subtotal = 0
+      const lines = rawLines
+        .map((line: any) => {
+          const quantity = Number(line.quantity || 1)
+          const unitPrice = Number(line.unitPrice || 0)
+          const description = String(line.description || '').trim()
+          if (!description || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(unitPrice) || unitPrice < 0) return null
+          subtotal += quantity * unitPrice
+          return {
+            productId: null,
+            description,
+            quantity: new Prisma.Decimal(quantity),
+            unitPrice: new Prisma.Decimal(unitPrice),
+            taxRateId: null,
+            subtotal: new Prisma.Decimal(quantity * unitPrice),
+          }
+        })
+        .filter(Boolean) as any[]
+      if (lines.length === 0) return { error: 'bill_lines_required' }
+      const issueDate = args.issueDate ? new Date(args.issueDate) : new Date()
+      const dueDate = args.dueDate ? new Date(args.dueDate) : new Date(issueDate.getTime() + 30 * 86400000)
+      const bill = await prisma.bill.create({
+        data: {
+          orgId,
+          contactId,
+          billNumber,
+          status: 'DRAFT',
+          issueDate,
+          dueDate,
+          currency: args.currency || 'SAR',
+          exchangeRate: new Prisma.Decimal(1),
+          subtotal: new Prisma.Decimal(subtotal),
+          taxTotal: new Prisma.Decimal(Math.max(total - subtotal, 0)),
+          total: new Prisma.Decimal(total || subtotal),
+          notes: args.notes || 'Created by AI assistant as purchase bill draft.',
+          lines: { create: lines },
+        },
+        include: { contact: { select: { displayName: true } } },
+      })
+      return { id: bill.id, billNumber: bill.billNumber, number: bill.billNumber, supplier: bill.contact.displayName, total: Number(bill.total), status: bill.status }
     }
     case 'list_invoices': {
       const where: any = { orgId }
