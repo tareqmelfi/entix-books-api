@@ -12,6 +12,15 @@ const paymentLinkUrl =
   args.find((arg) => arg.startsWith('--payment-link-url='))?.split('=').slice(1).join('=') ||
   process.env.SNBL_STRIPE_PAYMENT_LINK_URL ||
   null
+const stripeInvoiceId =
+  args.find((arg) => arg.startsWith('--stripe-invoice-id='))?.split('=')[1] ||
+  process.env.SNBL_STRIPE_INVOICE_ID ||
+  null
+const stripeInvoiceUrl =
+  args.find((arg) => arg.startsWith('--stripe-invoice-url='))?.split('=').slice(1).join('=') ||
+  process.env.SNBL_STRIPE_INVOICE_URL ||
+  paymentLinkUrl
+const markPaid = args.includes('--paid') || process.env.SNBL_STRIPE_STATUS === 'paid'
 
 const invoiceNumber = 'EN-SNBL-ENG01-20260603'
 const clientCode = 'EN-CLI-SNBL'
@@ -76,7 +85,7 @@ async function main() {
   const subtotal = totalLines()
   const invoiceData = {
     invoiceNumber,
-    status: 'SENT' as const,
+    status: markPaid ? 'PAID' as const : 'SENT' as const,
     issueDate: new Date('2026-06-03T00:00:00.000Z'),
     dueDate: new Date('2026-06-10T00:00:00.000Z'),
     currency: 'USD',
@@ -85,16 +94,18 @@ async function main() {
     taxTotal: dec(0),
     discountTotal: dec(0),
     total: subtotal,
-    amountPaid: dec(0),
+    amountPaid: markPaid ? subtotal : dec(0),
     notes: [
       'This invoice covers a partial Marketing Go-Live engagement scope under ENG-01-Marketing-Go-Live.',
       'Media spend, platform ad budget, and third-party costs are not included unless approved separately.',
       'Reference Equivalent: approximately SAR 4,646.25.',
       'Stripe metadata: client_code=EN-CLI-SNBL; commercial_registration=7051245541; accounting_status=register_after_payment.',
+      stripeInvoiceId ? `Stripe invoice id: ${stripeInvoiceId}.` : null,
+      markPaid ? 'Stripe payment status verified: paid.' : null,
     ].join('\n'),
     termsConditions: 'Payment Terms: Net 7. Due Date: June 10, 2026.',
-    paymentLinkUrl,
-    paymentLinkProvider: paymentLinkUrl ? 'stripe' : null,
+    paymentLinkUrl: stripeInvoiceUrl,
+    paymentLinkProvider: stripeInvoiceUrl ? 'stripe' : null,
   }
 
   if (dryRun) {

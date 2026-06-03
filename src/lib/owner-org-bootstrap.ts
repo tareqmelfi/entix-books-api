@@ -240,9 +240,12 @@ function defaultAccountFlags(seed: AccountSeed): Partial<ExtendedAccountSeed> {
 
 export async function bootstrapOwnerOrganizations(
   client: PrismaClient,
-  options: { ownerEmail?: string; resetSamples?: boolean } = {},
+  options: { ownerEmail?: string; orgKey?: OwnerOrgKey; resetSamples?: boolean } = {},
 ) {
   const ownerEmail = (options.ownerEmail || 'tareq@fc.sa').trim().toLowerCase()
+  const configs = options.orgKey
+    ? OWNER_ORG_BOOTSTRAPS.filter((config) => config.key === options.orgKey)
+    : OWNER_ORG_BOOTSTRAPS
   return client.$transaction(async (tx) => {
     const user = await tx.user.upsert({
       where: { email: ownerEmail },
@@ -251,7 +254,7 @@ export async function bootstrapOwnerOrganizations(
     })
 
     const results = []
-    for (const config of OWNER_ORG_BOOTSTRAPS) {
+    for (const config of configs) {
       const result = await ensureOwnerOrg(tx, config, user.id, options.resetSamples === true)
       results.push(result)
     }

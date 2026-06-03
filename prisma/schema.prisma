@@ -770,6 +770,7 @@ model Product {
   name             String
   nameAr           String?
   description      String?
+  imageUrl         String?     @db.Text
   type             ProductType @default(SERVICE)
   /// Category code · auto-derived from SKU prefix or set manually (e.g. "ADV", "AI", "BRD", "CLD")
   category         String?

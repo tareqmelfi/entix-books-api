@@ -10,13 +10,16 @@ const dryRun = args.includes('--dry-run')
 const resetSamples = args.includes('--reset-samples')
 const ownerEmailArg = args.find((arg) => arg.startsWith('--email='))?.split('=')[1]
 const ownerEmail = ownerEmailArg || 'tareq@fc.sa'
+const orgKeyArg = args.find((arg) => arg.startsWith('--org='))?.split('=')[1] as 'ensidex' | 'falcon-core' | undefined
+const orgKey = orgKeyArg === 'ensidex' || orgKeyArg === 'falcon-core' ? orgKeyArg : undefined
 
 if (dryRun) {
   console.log(JSON.stringify({
     dryRun: true,
     ownerEmail,
+    orgKey: orgKey || 'all',
     accountValidation: validateOwnerOrgPlan(),
-    orgs: summarizeOwnerOrgPlan(),
+    orgs: summarizeOwnerOrgPlan().filter((org) => !orgKey || org.slug === orgKey),
   }, null, 2))
   process.exit(0)
 }
@@ -28,7 +31,7 @@ if (!process.env.DATABASE_URL) {
 
 const prisma = new PrismaClient()
 
-bootstrapOwnerOrganizations(prisma, { ownerEmail, resetSamples })
+bootstrapOwnerOrganizations(prisma, { ownerEmail, orgKey, resetSamples })
   .then((result) => {
     console.log(JSON.stringify({ ok: true, ...result }, null, 2))
   })
