@@ -15,9 +15,15 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
+import { prisma } from '../db.js'
 import { resolveAiKey, logAiUsage, estimateCost, QuotaExceededError, DisabledByAdminError } from '../lib/ai-billing.js'
 import { inferMimeType, isImageMime, normalizeImageForVision, type NormalizedDocumentFile } from '../lib/document-images.js'
 import { isOpenRouterModelIssue, openRouterVisionModels } from '../lib/openrouter-models.js'
+import {
+  detectBankStatement,
+  logBankStatementBlockedAttempt,
+  markBankStatementExtraction,
+} from '../lib/bank-statement-guard.js'
 
 export const ocrRoutes = new Hono()
 
@@ -72,6 +78,7 @@ Rules:
 - documentNumber is critical. Extract invoice/receipt number from labels like رقم الفاتورة, رقم الإيصال, invoice no, receipt no, bill no, ref. Do NOT use terminal ID, authorization code, cashier number, commercial registration, VAT number, or card number as documentNumber.
 - Never collapse visible line items into only a total. If rows/items are visible, preserve each item with description, quantity, unitPrice, taxRate, subtotal. If the receipt repeats the same item in separate rows, keep separate rows unless the receipt explicitly groups them.
 - If payment details show split payments, return all visible payments in payments[] and choose paymentMethod from the largest payment. If only one payment is visible, include one payment row.
+- If the document is a bank/account statement, set docType="STATEMENT". Do not summarize it as one expense or one transaction.
 - For card payments, use MADA when mada is visible, otherwise CARD. If the last 4 digits are visible, put them in cardLast4 and never include the full card number.
 - Warnings must mention missing documentNumber, missing vendorVat, uncertain date, uncertain total, or uncertain line items.
 - "tags" should help classification (e.g. ["restaurant","mada","Q1-2026","food"]) · short kebab-case-ar/en
@@ -208,6 +215,39 @@ ocrRoutes.post('/extract', zValidator('json', singleSchema), async (c) => {
   const auth = c.get('auth') as { userId: string }
   const f = c.req.valid('json')
 
+  const prepared = await prepareFileForOcr(f)
+  if (prepared.error) {
+    return c.json({
+      error: 'image_preprocess_failed',
+      detail: prepared.error,
+      message: prepared.error,
+      originalMimeType: inferMimeType(f.mimeType, f.fileName),
+    }, 415)
+  }
+
+  const preDetection = detectBankStatement({
+    fileName: f.fileName,
+    mimeType: prepared.mimeType,
+    text: f.rawText,
+  })
+  if (preDetection.isBankStatement) {
+    await logBankStatementBlockedAttempt({
+      prisma,
+      orgId,
+      userId: auth.userId,
+      source: 'ocr.extract.pre_detection',
+      entityType: 'Document',
+      reasons: preDetection.reasons,
+      metadata: { fileName: f.fileName || null, mimeType: prepared.mimeType },
+    })
+    return c.json({
+      extracted: markBankStatementExtraction({}, preDetection.reasons),
+      model: 'bank-statement-guard',
+      cost: { promptTokens: 0, completionTokens: 0, totalCost: 0 },
+      source: 'bank-statement-guard',
+    })
+  }
+
   let resolved: Awaited<ReturnType<typeof resolveAiKey>>
   try { resolved = await resolveAiKey(orgId) } catch (e: any) {
     if (e instanceof QuotaExceededError) {
@@ -217,16 +257,6 @@ ocrRoutes.post('/extract', zValidator('json', singleSchema), async (c) => {
       return c.json({ error: 'ai_disabled', detail: e.reason }, 403)
     }
     return c.json({ error: 'ocr_disabled', detail: e.message }, 503)
-  }
-
-  const prepared = await prepareFileForOcr(f)
-  if (prepared.error) {
-    return c.json({
-      error: 'image_preprocess_failed',
-      detail: prepared.error,
-      message: prepared.error,
-      originalMimeType: inferMimeType(f.mimeType, f.fileName),
-    }, 415)
   }
 
   const result = await callOpenRouter({
@@ -258,6 +288,24 @@ ocrRoutes.post('/extract', zValidator('json', singleSchema), async (c) => {
   }
   if (extracted && prepared.warnings.length) {
     extracted.warnings = [...(extracted.warnings || []), ...prepared.warnings]
+  }
+  const postDetection = detectBankStatement({
+    fileName: f.fileName,
+    mimeType: prepared.mimeType,
+    text: f.rawText,
+    extracted,
+  })
+  if (extracted && postDetection.isBankStatement) {
+    extracted = markBankStatementExtraction(extracted, postDetection.reasons)
+    await logBankStatementBlockedAttempt({
+      prisma,
+      orgId,
+      userId: auth.userId,
+      source: 'ocr.extract.post_detection',
+      entityType: 'Document',
+      reasons: postDetection.reasons,
+      metadata: { fileName: f.fileName || null, mimeType: prepared.mimeType },
+    })
   }
 
   // Cost tracking
@@ -299,6 +347,42 @@ ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
   const auth = c.get('auth') as { userId: string }
   const { files, hint } = c.req.valid('json')
 
+  const preflightDetections = files.map((f) => ({
+    file: f,
+    detection: detectBankStatement({
+      fileName: f.fileName,
+      mimeType: inferMimeType(f.mimeType, f.fileName),
+      text: [hint, f.rawText].filter(Boolean).join('\n'),
+    }),
+  }))
+  if (preflightDetections.every((entry) => entry.detection.isBankStatement)) {
+    const results: Array<{ fileName?: string; mimeType: string; ok: boolean; extracted?: any; model?: string }> = []
+    for (const entry of preflightDetections) {
+      const mimeType = inferMimeType(entry.file.mimeType, entry.file.fileName)
+      await logBankStatementBlockedAttempt({
+        prisma,
+        orgId,
+        userId: auth.userId,
+        source: 'ocr.extract_batch.preflight_detection',
+        entityType: 'Document',
+        reasons: entry.detection.reasons,
+        metadata: { fileName: entry.file.fileName || null, mimeType },
+      })
+      results.push({
+        fileName: entry.file.fileName,
+        mimeType,
+        ok: true,
+        extracted: markBankStatementExtraction({}, entry.detection.reasons),
+        model: 'bank-statement-guard',
+      })
+    }
+    return c.json({
+      files: results,
+      summary: { totalFiles: files.length, successful: results.length, failed: 0, totalAmount: 0, currency: null },
+      index: { byDocType: { STATEMENT: results.length }, byVendor: {}, byMonth: {}, byTag: {} },
+    })
+  }
+
   let resolved: Awaited<ReturnType<typeof resolveAiKey>>
   try { resolved = await resolveAiKey(orgId) } catch (e: any) {
     if (e instanceof QuotaExceededError) {
@@ -324,6 +408,24 @@ ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
       const prepared = await prepareFileForOcr(f)
       if (prepared.error) {
         results.push({ fileName: f.fileName, mimeType: inferMimeType(f.mimeType, f.fileName), ok: false, error: prepared.error })
+        continue
+      }
+      const preDetection = detectBankStatement({
+        fileName: f.fileName,
+        mimeType: prepared.mimeType,
+        text: f.rawText,
+      })
+      if (preDetection.isBankStatement) {
+        await logBankStatementBlockedAttempt({
+          prisma,
+          orgId,
+          userId: auth.userId,
+          source: 'ocr.extract_batch.pre_detection',
+          entityType: 'Document',
+          reasons: preDetection.reasons,
+          metadata: { fileName: f.fileName || null, mimeType: prepared.mimeType },
+        })
+        results.push({ fileName: f.fileName, mimeType: prepared.mimeType, ok: true, extracted: markBankStatementExtraction({}, preDetection.reasons), model: 'bank-statement-guard' })
         continue
       }
       const r = await callOpenRouter({
@@ -362,6 +464,24 @@ ocrRoutes.post('/extract-batch', zValidator('json', batchSchema), async (c) => {
       }
       if (prepared.warnings.length) {
         extracted.warnings = [...(extracted.warnings || []), ...prepared.warnings]
+      }
+      const postDetection = detectBankStatement({
+        fileName: f.fileName,
+        mimeType: prepared.mimeType,
+        text: f.rawText,
+        extracted,
+      })
+      if (postDetection.isBankStatement) {
+        extracted = markBankStatementExtraction(extracted, postDetection.reasons)
+        await logBankStatementBlockedAttempt({
+          prisma,
+          orgId,
+          userId: auth.userId,
+          source: 'ocr.extract_batch.post_detection',
+          entityType: 'Document',
+          reasons: postDetection.reasons,
+          metadata: { fileName: f.fileName || null, mimeType: prepared.mimeType },
+        })
       }
       results.push({ fileName: f.fileName, mimeType: prepared.mimeType, ok: true, extracted, model: r.model })
     }

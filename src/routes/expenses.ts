@@ -4,6 +4,11 @@ import { z } from 'zod'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
 import { nextContactCode } from '../lib/numbering.js'
+import {
+  bankStatementBlockedResponse,
+  detectBankStatement,
+  logBankStatementBlockedAttempt,
+} from '../lib/bank-statement-guard.js'
 
 export const expensesRoutes = new Hono()
 
@@ -322,7 +327,36 @@ expensesRoutes.get('/:id', async (c) => {
 // POST /expenses
 expensesRoutes.post('/', zValidator('json', expenseSchema), async (c) => {
   const orgId = c.get('orgId')
+  const auth = c.get('auth') as { userId?: string } | undefined
   const data = c.req.valid('json')
+  const statementDetection = detectBankStatement({
+    fileName: data.attachmentName || undefined,
+    mimeType: data.attachmentType || undefined,
+    extracted: data.extractedJson,
+    text: [
+      data.description,
+      data.notes,
+      data.category,
+      data.vendorName,
+      data.documentNumber,
+      data.reference,
+    ].filter(Boolean).join('\n'),
+  })
+  if (statementDetection.isBankStatement) {
+    await logBankStatementBlockedAttempt({
+      prisma,
+      orgId,
+      userId: auth?.userId,
+      source: 'expenses.create',
+      entityType: 'Expense',
+      reasons: statementDetection.reasons,
+      metadata: {
+        attachmentName: data.attachmentName || null,
+        documentNumber: data.documentNumber || null,
+      },
+    })
+    return c.json(bankStatementBlockedResponse(statementDetection.reasons), 422)
+  }
   const number = data.number || (await nextExpenseNumber(orgId))
   const amount = data.subtotal ?? data.amount
   const taxAmount = data.taxAmount || 0

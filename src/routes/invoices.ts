@@ -216,7 +216,7 @@ function buildInvoiceHtml(opts: { org: any; contact: any; invoice: any; lines: a
   const { org, contact, invoice, lines } = opts
   const total = Number(invoice.total)
   const subtotal = Number(invoice.subtotal)
-  const tax = Number(invoice.taxAmount)
+  const tax = Number(invoice.taxTotal || 0)
   const paid = Number(invoice.amountPaid || 0)
   const due = total - paid
   const currency = invoice.currency || 'SAR'

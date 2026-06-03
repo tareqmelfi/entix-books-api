@@ -27,9 +27,11 @@ model User {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  memberships  OrgMembership[]
-  sessions     AuthSession[]
-  authAccounts AuthAccount[]
+  memberships     OrgMembership[]
+  sessions        AuthSession[]
+  authAccounts    AuthAccount[]
+  aiConversations AiConversation[]
+  aiMessages      AiMessage[]
 
   @@index([email])
 }
@@ -166,6 +168,8 @@ model Organization {
   signatures        SignatureRequest[]
   aiBilling         AiBilling?
   aiUsageLogs       AiUsageLog[]
+  aiConversations   AiConversation[]
+  aiMessages        AiMessage[]
   warehouses        Warehouse[]
   stockLevels       StockLevel[]
   stockMovements    StockMovement[]
@@ -1118,38 +1122,38 @@ enum VoucherType {
 // ============================================================================
 
 model Expense {
-  id            String        @id @default(cuid())
-  orgId         String
-  contactId     String?
-  number        String
-  date          DateTime
-  category      String // Rent · Utilities · Salaries · Supplies · Travel · Other · ...
-  description   String?
-  amount        Decimal       @db.Decimal(18, 4)
-  currency      String        @default("SAR")
-  paymentMethod PaymentMethod
-  vendorName    String? // free-text · or link to a Contact later
-  documentNumber String? // supplier receipt / invoice number
-  reference     String? // bank reference / receipt #
-  taxRateId     String?
-  taxAmount     Decimal       @default(0) @db.Decimal(18, 4)
-  subtotal      Decimal       @default(0) @db.Decimal(18, 4)
-  total         Decimal       @db.Decimal(18, 4)
-  receiptUrl    String? // R2 / S3 url of scanned receipt
-  attachmentName String?
-  attachmentType String?
+  id                  String        @id @default(cuid())
+  orgId               String
+  contactId           String?
+  number              String
+  date                DateTime
+  category            String // Rent · Utilities · Salaries · Supplies · Travel · Other · ...
+  description         String?
+  amount              Decimal       @db.Decimal(18, 4)
+  currency            String        @default("SAR")
+  paymentMethod       PaymentMethod
+  vendorName          String? // free-text · or link to a Contact later
+  documentNumber      String? // supplier receipt / invoice number
+  reference           String? // bank reference / receipt #
+  taxRateId           String?
+  taxAmount           Decimal       @default(0) @db.Decimal(18, 4)
+  subtotal            Decimal       @default(0) @db.Decimal(18, 4)
+  total               Decimal       @db.Decimal(18, 4)
+  receiptUrl          String? // R2 / S3 url of scanned receipt
+  attachmentName      String?
+  attachmentType      String?
   attachmentSizeBytes Int?
-  attachmentBase64 String? @db.Text
-  attachmentCount Int @default(0)
-  lineItems     Json?
-  paymentSplits Json?
-  extractedJson Json?
-  ocrConfidence Decimal? @db.Decimal(5, 4)
-  duplicateOfId String?
-  duplicateReason String?
-  notes         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  attachmentBase64    String?       @db.Text
+  attachmentCount     Int           @default(0)
+  lineItems           Json?
+  paymentSplits       Json?
+  extractedJson       Json?
+  ocrConfidence       Decimal?      @db.Decimal(5, 4)
+  duplicateOfId       String?
+  duplicateReason     String?
+  notes               String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
 
   org     Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   contact Contact?     @relation(fields: [contactId], references: [id], onDelete: SetNull)
@@ -1246,6 +1250,44 @@ enum AiKeyMode {
   HOSTED_PRO // entix key · $30/month included · $19 subscription
   HOSTED_BUSINESS // entix key · $100/month included · $49 subscription
   PAYG // entix key · pay-as-you-go · $1.20 per $1 of AI cost
+}
+
+model AiConversation {
+  id            String   @id @default(cuid())
+  orgId         String
+  userId        String
+  title         String   @default("محادثة جديدة")
+  status        String   @default("ACTIVE") // ACTIVE | ARCHIVED
+  lastMessageAt DateTime @default(now())
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  org      Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages AiMessage[]
+
+  @@index([orgId, userId, lastMessageAt])
+  @@index([orgId, status, lastMessageAt])
+}
+
+model AiMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  orgId          String
+  userId         String?
+  role           String // user | assistant
+  content        String   @db.Text
+  toolResults    Json?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  org          Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user         User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@index([orgId, createdAt])
 }
 
 model AiBilling {

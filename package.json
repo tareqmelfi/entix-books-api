@@ -6,12 +6,15 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
+    "test": "tsx --test src/**/*.test.ts",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate deploy",
     "prisma:dev-migrate": "prisma migrate dev",
     "seed:demo": "tsx src/scripts/seed-demo.ts",
-    "seed:demo:reset": "tsx src/scripts/seed-demo.ts $1 --reset"
+    "seed:demo:reset": "tsx src/scripts/seed-demo.ts $1 --reset",
+    "bootstrap:owner-orgs": "tsx src/scripts/ensure-owner-orgs.ts",
+    "bootstrap:owner-orgs:dry-run": "tsx src/scripts/ensure-owner-orgs.ts --dry-run"
   },
   "dependencies": {
     "@hono/node-server": "1.19.14",

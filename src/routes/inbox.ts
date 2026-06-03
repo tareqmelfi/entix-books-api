@@ -24,6 +24,11 @@ import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { Prisma } from '@prisma/client'
 import { prisma } from '../db.js'
+import {
+  bankStatementBlockedResponse,
+  detectBankStatement,
+  logBankStatementBlockedAttempt,
+} from '../lib/bank-statement-guard.js'
 
 // Public · webhook only · token-validated inside
 export const inboxWebhookRoutes = new Hono()
@@ -147,6 +152,27 @@ inboxRoutes.post('/:id/approve', async (c) => {
   if (!m.extractedJson) return c.json({ error: 'not_extracted', message: 'لم يتم استخراج البيانات بعد' }, 400)
 
   const ex = m.extractedJson as any
+  const statementDetection = detectBankStatement({
+    extracted: ex,
+    text: [m.subject, m.fromAddress].filter(Boolean).join('\n'),
+  })
+  if (statementDetection.isBankStatement) {
+    await logBankStatementBlockedAttempt({
+      prisma,
+      orgId,
+      userId: auth?.userId,
+      source: 'inbox.approve',
+      entityType: 'InboxMessage',
+      entityId: id,
+      reasons: statementDetection.reasons,
+      metadata: { subject: m.subject || null, fromAddress: m.fromAddress || null },
+    })
+    await prisma.inboxMessage.update({
+      where: { id },
+      data: { status: 'ERROR' as any },
+    })
+    return c.json(bankStatementBlockedResponse(statementDetection.reasons), 422)
+  }
 
   // Try to find or create the contact (supplier)
   let contactId: string | null = null

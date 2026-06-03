@@ -16,6 +16,11 @@ import { prisma } from '../db.js'
 import { resolveAiKey, logAiUsage, estimateCost, QuotaExceededError, DisabledByAdminError } from '../lib/ai-billing.js'
 import { isOpenRouterModelIssue, openRouterAgentModels } from '../lib/openrouter-models.js'
 import { nextContactCode } from '../lib/numbering.js'
+import {
+  bankStatementBlockedResponse,
+  detectBankStatement,
+  logBankStatementBlockedAttempt,
+} from '../lib/bank-statement-guard.js'
 
 export const agentRoutes = new Hono()
 
@@ -25,6 +30,160 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions'
 // Fallback chain · if first model is unavailable, try the next one
 // Order: best-quality first · cheaper/older as fallback
 const MODEL_CHAIN = openRouterAgentModels(process.env.OPENROUTER_AGENT_MODEL)
+const CONVERSATION_HISTORY_LIMIT = 40
+const N8N_AGENT_WEBHOOK_URL = process.env.ENTIX_N8N_AGENT_WEBHOOK_URL || ''
+const N8N_WEBHOOK_SECRET = process.env.ENTIX_N8N_WEBHOOK_SECRET || ''
+
+type AgentChatMessage = {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+}
+
+function buildConversationTitle(text: string): string {
+  const compact = text.replace(/\s+/g, ' ').trim()
+  if (!compact) return 'محادثة جديدة'
+  return compact.length > 44 ? `${compact.slice(0, 44)}...` : compact
+}
+
+function serializeConversation(row: any) {
+  return {
+    id: row.id,
+    title: row.title,
+    status: row.status,
+    lastMessageAt: row.lastMessageAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    messageCount: typeof row._count?.messages === 'number' ? row._count.messages : undefined,
+  }
+}
+
+function serializeMessage(row: any) {
+  return {
+    id: row.id,
+    role: row.role,
+    content: row.content,
+    toolResults: row.toolResults,
+    metadata: row.metadata,
+    createdAt: row.createdAt,
+  }
+}
+
+function getN8nHost() {
+  if (!N8N_AGENT_WEBHOOK_URL) return null
+  try {
+    return new URL(N8N_AGENT_WEBHOOK_URL).host
+  } catch {
+    return 'invalid-url'
+  }
+}
+
+async function ensureConversation(orgId: string, userId: string, conversationId: string | undefined, seedText: string) {
+  if (conversationId) {
+    const existing = await prisma.aiConversation.findFirst({
+      where: { id: conversationId, orgId, userId, status: 'ACTIVE' },
+    })
+    if (existing) return existing
+  }
+
+  return prisma.aiConversation.create({
+    data: {
+      orgId,
+      userId,
+      title: buildConversationTitle(seedText),
+      lastMessageAt: new Date(),
+    },
+  })
+}
+
+async function loadConversationMessages(conversationId: string): Promise<AgentChatMessage[]> {
+  const rows = await prisma.aiMessage.findMany({
+    where: { conversationId, role: { in: ['user', 'assistant'] } },
+    orderBy: { createdAt: 'desc' },
+    take: CONVERSATION_HISTORY_LIMIT,
+  })
+
+  return rows
+    .reverse()
+    .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+}
+
+async function persistAssistantMessage(args: {
+  conversationId: string
+  orgId: string
+  content: string
+  toolResults?: any[]
+  metadata?: Prisma.InputJsonValue
+}) {
+  const [message] = await prisma.$transaction([
+    prisma.aiMessage.create({
+      data: {
+        conversationId: args.conversationId,
+        orgId: args.orgId,
+        role: 'assistant',
+        content: args.content,
+        toolResults: args.toolResults?.length ? (args.toolResults as Prisma.InputJsonValue) : undefined,
+        metadata: args.metadata,
+      },
+    }),
+    prisma.aiConversation.update({
+      where: { id: args.conversationId },
+      data: { lastMessageAt: new Date() },
+    }),
+  ])
+  return message
+}
+
+async function callN8nAgentIfConfigured(args: {
+  orgId: string
+  userId: string
+  conversationId: string
+  message: string
+  history: AgentChatMessage[]
+}) {
+  if (!N8N_AGENT_WEBHOOK_URL) return null
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 20_000)
+  try {
+    const res = await fetch(N8N_AGENT_WEBHOOK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(N8N_WEBHOOK_SECRET ? { 'X-Entix-Webhook-Secret': N8N_WEBHOOK_SECRET } : {}),
+      },
+      body: JSON.stringify({
+        event: 'entix.agent.chat',
+        source: 'api.entix.io',
+        orgId: args.orgId,
+        userId: args.userId,
+        conversationId: args.conversationId,
+        message: args.message,
+        history: args.history,
+      }),
+      signal: controller.signal,
+    })
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '')
+      console.warn('[agent:n8n] webhook failed', res.status, detail.slice(0, 200))
+      return null
+    }
+
+    const data = await res.json().catch(() => null) as any
+    const message = data?.message || data?.reply || data?.assistantMessage || data?.output
+    if (!message || typeof message !== 'string') return null
+    return {
+      message,
+      toolResults: Array.isArray(data?.toolResults) ? data.toolResults : [],
+      raw: data,
+    }
+  } catch (e: any) {
+    console.warn('[agent:n8n] webhook unavailable', e?.message || e)
+    return null
+  } finally {
+    clearTimeout(timeout)
+  }
+}
 
 async function callOpenRouterWithFallback(payload: any, apiKey: string): Promise<{ ok: true; json: any; model: string } | { ok: false; status: number; detail: string; triedModels: string[] }> {
   const tried: string[] = []
@@ -82,6 +241,7 @@ Rules:
 - Arabic-first · use English when user prompts in English
 - If user uploads an image · use ocr_extract first then create_expense or create_invoice
 - When recording an expense from OCR, preserve documentNumber, supplierTaxId/vendorVat, lineItems, paymentSplits, and duplicate warnings. Do not reduce a tax invoice to only amount.
+- A bank statement is not an expense. Never create expenses, vouchers, journal entries, or GL postings from bank statements. Route them to bank statement review/staging.
 - Be concise · 2-4 sentences usually enough · use tables for lists
 - If a tool fails · explain why and suggest alternative`
 
@@ -235,7 +395,7 @@ const TOOLS = [
   },
 ]
 
-async function executeTool(name: string, args: any, orgId: string) {
+async function executeTool(name: string, args: any, orgId: string, userId?: string) {
   switch (name) {
     case 'list_contacts': {
       const where: any = { orgId, isActive: true }
@@ -282,6 +442,32 @@ async function executeTool(name: string, args: any, orgId: string) {
       return { count: items.length, total, items: items.map((e) => ({ id: e.id, number: e.number, documentNumber: e.documentNumber, date: e.date.toISOString().slice(0, 10), category: e.category, amount: Number(e.total), taxAmount: Number(e.taxAmount), method: e.paymentMethod, vendor: e.vendorName, duplicateOfId: e.duplicateOfId })) }
     }
     case 'create_expense': {
+      const statementDetection = detectBankStatement({
+        extracted: args,
+        text: [
+          args.category,
+          args.description,
+          args.vendorName,
+          args.documentNumber,
+          args.reference,
+          ...(Array.isArray(args.lineItems) ? args.lineItems.map((line: any) => line?.description || '') : []),
+        ].filter(Boolean).join('\n'),
+      })
+      if (statementDetection.isBankStatement) {
+        await logBankStatementBlockedAttempt({
+          prisma,
+          orgId,
+          userId,
+          source: 'agent.create_expense',
+          entityType: 'Expense',
+          reasons: statementDetection.reasons,
+          metadata: {
+            documentNumber: args.documentNumber || null,
+            reference: args.reference || null,
+          },
+        })
+        return bankStatementBlockedResponse(statementDetection.reasons)
+      }
       const year = new Date().getFullYear()
       const last = await prisma.expense.findFirst({ where: { orgId, number: { startsWith: `EXP-${year}-` } }, orderBy: { number: 'desc' }, select: { number: true } })
       const n = last ? Number(last.number.split('-').pop()) + 1 : 1
@@ -375,6 +561,25 @@ async function executeTool(name: string, args: any, orgId: string) {
       return { count: items.length, items: items.map((i) => ({ id: i.id, number: i.invoiceNumber, contact: i.contact.displayName, total: Number(i.total), paid: Number(i.amountPaid), status: i.status, date: i.issueDate.toISOString().slice(0, 10) })) }
     }
     case 'create_voucher': {
+      const statementDetection = detectBankStatement({
+        extracted: args,
+        text: [args.notes, args.reference].filter(Boolean).join('\n'),
+      })
+      if (statementDetection.isBankStatement) {
+        await logBankStatementBlockedAttempt({
+          prisma,
+          orgId,
+          userId,
+          source: 'agent.create_voucher',
+          entityType: 'Voucher',
+          reasons: statementDetection.reasons,
+          metadata: {
+            type: args.type || null,
+            reference: args.reference || null,
+          },
+        })
+        return bankStatementBlockedResponse(statementDetection.reasons)
+      }
       const year = new Date().getFullYear()
       const prefix = args.type === 'RECEIPT' ? `R-${year}-` : `P-${year}-`
       const last = await prisma.voucher.findFirst({ where: { orgId, type: args.type, number: { startsWith: prefix } }, orderBy: { number: 'desc' }, select: { number: true } })
@@ -429,18 +634,196 @@ async function executeTool(name: string, args: any, orgId: string) {
 }
 
 const chatSchema = z.object({
+  conversationId: z.string().optional(),
+  message: z.string().trim().min(1).max(20000).optional(),
   messages: z.array(
     z.object({
       role: z.enum(['user', 'assistant', 'system']),
       content: z.string(),
     }),
-  ),
+  ).optional(),
+}).refine((data) => data.message || (Array.isArray(data.messages) && data.messages.length > 0), {
+  message: 'message أو messages مطلوب',
+})
+
+const conversationListQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(50).optional().default(25),
+  status: z.enum(['ACTIVE', 'ARCHIVED']).optional().default('ACTIVE'),
+})
+
+const createConversationMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  content: z.string().min(1).max(50000),
+  toolResults: z.any().optional(),
+  metadata: z.any().optional(),
+})
+
+agentRoutes.get('/conversations', zValidator('query', conversationListQuery), async (c) => {
+  const orgId = c.get('orgId') as string
+  const auth = c.get('auth') as { userId: string }
+  const { limit, status } = c.req.valid('query')
+
+  const items = await prisma.aiConversation.findMany({
+    where: { orgId, userId: auth.userId, status },
+    orderBy: { lastMessageAt: 'desc' },
+    take: limit,
+    include: { _count: { select: { messages: true } } },
+  })
+
+  return c.json({ items: items.map(serializeConversation) })
+})
+
+agentRoutes.post('/conversations', async (c) => {
+  const orgId = c.get('orgId') as string
+  const auth = c.get('auth') as { userId: string }
+  const body = await c.req.json().catch(() => ({})) as { title?: string }
+
+  const row = await prisma.aiConversation.create({
+    data: {
+      orgId,
+      userId: auth.userId,
+      title: buildConversationTitle(body.title || 'محادثة جديدة'),
+      lastMessageAt: new Date(),
+    },
+    include: { _count: { select: { messages: true } } },
+  })
+
+  return c.json({ conversation: serializeConversation(row) }, 201)
+})
+
+agentRoutes.get('/conversations/:id/messages', async (c) => {
+  const orgId = c.get('orgId') as string
+  const auth = c.get('auth') as { userId: string }
+  const id = c.req.param('id')
+
+  const conversation = await prisma.aiConversation.findFirst({
+    where: { id, orgId, userId: auth.userId },
+    include: { _count: { select: { messages: true } } },
+  })
+  if (!conversation) return c.json({ error: 'conversation_not_found' }, 404)
+
+  const messages = await prisma.aiMessage.findMany({
+    where: { conversationId: id },
+    orderBy: { createdAt: 'asc' },
+  })
+
+  return c.json({
+    conversation: serializeConversation(conversation),
+    messages: messages.map(serializeMessage),
+  })
+})
+
+agentRoutes.post('/conversations/:id/messages', zValidator('json', createConversationMessageSchema), async (c) => {
+  const orgId = c.get('orgId') as string
+  const auth = c.get('auth') as { userId: string }
+  const id = c.req.param('id')
+  const body = c.req.valid('json')
+
+  const existing = await prisma.aiConversation.findFirst({
+    where: { id, orgId, userId: auth.userId, status: 'ACTIVE' },
+  })
+  if (!existing) return c.json({ error: 'conversation_not_found' }, 404)
+
+  const [message, conversation] = await prisma.$transaction([
+    prisma.aiMessage.create({
+      data: {
+        conversationId: id,
+        orgId,
+        userId: body.role === 'user' ? auth.userId : null,
+        role: body.role,
+        content: body.content,
+        toolResults: body.toolResults ? (body.toolResults as Prisma.InputJsonValue) : undefined,
+        metadata: body.metadata ? (body.metadata as Prisma.InputJsonValue) : undefined,
+      },
+    }),
+    prisma.aiConversation.update({
+      where: { id },
+      data: {
+        lastMessageAt: new Date(),
+        ...(existing.title === 'محادثة جديدة' && body.role === 'user' ? { title: buildConversationTitle(body.content) } : {}),
+      },
+      include: { _count: { select: { messages: true } } },
+    }),
+  ])
+
+  return c.json({
+    message: serializeMessage(message),
+    conversation: serializeConversation(conversation),
+  }, 201)
+})
+
+agentRoutes.patch('/conversations/:id', async (c) => {
+  const orgId = c.get('orgId') as string
+  const auth = c.get('auth') as { userId: string }
+  const id = c.req.param('id')
+  const body = await c.req.json().catch(() => ({})) as { title?: string; status?: 'ACTIVE' | 'ARCHIVED' }
+
+  const existing = await prisma.aiConversation.findFirst({ where: { id, orgId, userId: auth.userId } })
+  if (!existing) return c.json({ error: 'conversation_not_found' }, 404)
+
+  const row = await prisma.aiConversation.update({
+    where: { id },
+    data: {
+      ...(body.title ? { title: buildConversationTitle(body.title) } : {}),
+      ...(body.status ? { status: body.status } : {}),
+    },
+    include: { _count: { select: { messages: true } } },
+  })
+
+  return c.json({ conversation: serializeConversation(row) })
 })
 
 agentRoutes.post('/chat', zValidator('json', chatSchema), async (c) => {
   const orgId = c.get('orgId') as string
   const auth = c.get('auth') as { userId: string }
-  const { messages } = c.req.valid('json')
+  const { conversationId, message, messages = [] } = c.req.valid('json')
+
+  let activeConversation: any | null = null
+  let conversationMessages: AgentChatMessage[] = messages
+
+  if (message) {
+    activeConversation = await ensureConversation(orgId, auth.userId, conversationId, message)
+    await prisma.$transaction([
+      prisma.aiMessage.create({
+        data: {
+          conversationId: activeConversation.id,
+          orgId,
+          userId: auth.userId,
+          role: 'user',
+          content: message,
+        },
+      }),
+      prisma.aiConversation.update({
+        where: { id: activeConversation.id },
+        data: { lastMessageAt: new Date() },
+      }),
+    ])
+    conversationMessages = await loadConversationMessages(activeConversation.id)
+
+    const n8nResult = await callN8nAgentIfConfigured({
+      orgId,
+      userId: auth.userId,
+      conversationId: activeConversation.id,
+      message,
+      history: conversationMessages,
+    })
+    if (n8nResult) {
+      await persistAssistantMessage({
+        conversationId: activeConversation.id,
+        orgId,
+        content: n8nResult.message,
+        toolResults: n8nResult.toolResults,
+        metadata: { source: 'n8n', raw: n8nResult.raw } as Prisma.InputJsonValue,
+      })
+      return c.json({
+        message: n8nResult.message,
+        toolResults: n8nResult.toolResults,
+        conversationId: activeConversation.id,
+        conversation: serializeConversation(activeConversation),
+        source: 'n8n',
+      })
+    }
+  }
 
   // Resolve API key based on org's billing config (BYOK or HOSTED)
   let resolved: Awaited<ReturnType<typeof resolveAiKey>>
@@ -463,7 +846,7 @@ agentRoutes.post('/chat', zValidator('json', chatSchema), async (c) => {
   }
 
   // Tool-calling loop · max 5 turns
-  const conversation: any[] = [{ role: 'system', content: SYSTEM_PROMPT }, ...messages]
+  const conversation: any[] = [{ role: 'system', content: SYSTEM_PROMPT }, ...conversationMessages]
   const toolResults: any[] = []
 
   let activeModel = MODEL_CHAIN[0]
@@ -529,13 +912,29 @@ agentRoutes.post('/chat', zValidator('json', chatSchema), async (c) => {
         promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
         costUsd: totalCost, successful: true,
       })
-      return c.json({ message: msg.content, toolResults, model: activeModel, source: resolved.source })
+      if (activeConversation) {
+        await persistAssistantMessage({
+          conversationId: activeConversation.id,
+          orgId,
+          content: msg.content || '',
+          toolResults,
+          metadata: { source: resolved.source, model: activeModel } as Prisma.InputJsonValue,
+        })
+      }
+      return c.json({
+        message: msg.content,
+        toolResults,
+        model: activeModel,
+        source: resolved.source,
+        conversationId: activeConversation?.id,
+        conversation: activeConversation ? serializeConversation(activeConversation) : undefined,
+      })
     }
 
     for (const tc of toolCalls) {
       const args = JSON.parse(tc.function.arguments || '{}')
       try {
-        const result = await executeTool(tc.function.name, args, orgId)
+        const result = await executeTool(tc.function.name, args, orgId, auth.userId)
         toolResults.push({ tool: tc.function.name, args, result })
         conversation.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(result) })
       } catch (e: any) {
@@ -554,7 +953,23 @@ agentRoutes.post('/chat', zValidator('json', chatSchema), async (c) => {
     promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens,
     costUsd: totalCost, successful: true, errorCode: 'max_turns_reached',
   })
-  return c.json({ message: 'الحد الأقصى من الخطوات تم استنفاده · يرجى تبسيط الطلب', toolResults, source: resolved.source }, 207)
+  const exhaustedMessage = 'الحد الأقصى من الخطوات تم استنفاده · يرجى تبسيط الطلب'
+  if (activeConversation) {
+    await persistAssistantMessage({
+      conversationId: activeConversation.id,
+      orgId,
+      content: exhaustedMessage,
+      toolResults,
+      metadata: { source: resolved.source, model: activeModel, status: 'max_turns_reached' } as Prisma.InputJsonValue,
+    })
+  }
+  return c.json({
+    message: exhaustedMessage,
+    toolResults,
+    source: resolved.source,
+    conversationId: activeConversation?.id,
+    conversation: activeConversation ? serializeConversation(activeConversation) : undefined,
+  }, 207)
 })
 
 agentRoutes.get('/health', (c) =>
@@ -563,6 +978,10 @@ agentRoutes.get('/health', (c) =>
     primaryModel: MODEL_CHAIN[0],
     fallbackChain: MODEL_CHAIN,
     tools: TOOLS.length,
+    n8n: {
+      configured: !!N8N_AGENT_WEBHOOK_URL,
+      host: getN8nHost(),
+    },
   }),
 )
 

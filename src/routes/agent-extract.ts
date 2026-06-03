@@ -23,6 +23,12 @@ import { z } from 'zod'
 import { resolveAiKey, logAiUsage, estimateCost } from '../lib/ai-billing.js'
 import { inferMimeType, isImageMime, normalizeImageForVision } from '../lib/document-images.js'
 import { isOpenRouterModelIssue, openRouterVisionModels } from '../lib/openrouter-models.js'
+import { prisma } from '../db.js'
+import {
+  bankStatementBlockedResponse,
+  detectBankStatement,
+  logBankStatementBlockedAttempt,
+} from '../lib/bank-statement-guard.js'
 
 export const agentExtractRoutes = new Hono()
 
@@ -145,6 +151,7 @@ Rules:
 - Suggest category/accountName per line when it is obvious (groceries, meals, office, software, fuel, utilities).
 - Extract payment methods separately. If total is paid by both cash and card, return multiple payments whose sum equals total.
 - VAT rate in KSA is 15% by default. If the document shows a different rate, use that.
+- If the source is a bank/account statement, do not treat it as an expense, bill, or one payment. Return kind="unknown" with warnings that it requires bank statement review.
 - If "taxInclusive" cannot be determined, default to false (exclusive · price + tax).
 - Dates in DD/MM/YYYY → convert to YYYY-MM-DD.
 - Currency · default "SAR" if not stated.
@@ -169,6 +176,36 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
     }, 415)
   }
 
+  // Build the user message
+  // For images/PDFs: vision payload · for text: plain text
+  const isImage = prepared.mimeType.startsWith('image/')
+  const isPdf = prepared.mimeType === 'application/pdf'
+  const isText = prepared.mimeType.startsWith('text/') || prepared.mimeType.includes('csv')
+  const decodedText = isText ? Buffer.from(prepared.fileBase64, 'base64').toString('utf-8').slice(0, 50000) : ''
+  const preDetection = detectBankStatement({
+    fileName,
+    mimeType: prepared.mimeType,
+    text: [hint, decodedText].filter(Boolean).join('\n'),
+  })
+  if (preDetection.isBankStatement) {
+    await logBankStatementBlockedAttempt({
+      prisma,
+      orgId,
+      userId: auth?.userId,
+      source: 'agent.extract_document.pre_detection',
+      entityType: 'Document',
+      reasons: preDetection.reasons,
+      metadata: { fileName: fileName || null, target },
+    })
+    return c.json({
+      ...bankStatementBlockedResponse(preDetection.reasons),
+      kind: 'unknown',
+      confidence: 1,
+      warnings: ['Bank statement auto-create blocked.'],
+      _meta: { target, file: { originalMimeType, mimeType: prepared.mimeType, converted: prepared.converted } },
+    })
+  }
+
   // Resolve AI key (BYOK or hosted credits)
   let resolved
   try {
@@ -179,12 +216,6 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
   if (!resolved.apiKey) {
     return c.json({ error: 'no_key', message: 'مفتاح AI غير متوفر' }, 503)
   }
-
-  // Build the user message
-  // For images/PDFs: vision payload · for text: plain text
-  const isImage = prepared.mimeType.startsWith('image/')
-  const isPdf = prepared.mimeType === 'application/pdf'
-  const isText = prepared.mimeType.startsWith('text/') || prepared.mimeType.includes('csv')
 
   let userContent: any
   if (isPdf) {
@@ -214,8 +245,7 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
       },
     ]
   } else if (isText) {
-    const text = Buffer.from(prepared.fileBase64, 'base64').toString('utf-8')
-    userContent = `Extract structured data from this text. Target: ${target}.${hint ? `\n\nUser hint: ${hint}` : ''}\n\nDefault tax rate: ${defaultTaxRate}\nDefault currency: ${currency}\n\n--- DOCUMENT START ---\n${text.slice(0, 50000)}\n--- DOCUMENT END ---`
+    userContent = `Extract structured data from this text. Target: ${target}.${hint ? `\n\nUser hint: ${hint}` : ''}\n\nDefault tax rate: ${defaultTaxRate}\nDefault currency: ${currency}\n\n--- DOCUMENT START ---\n${decodedText}\n--- DOCUMENT END ---`
   } else {
     return c.json({ error: 'unsupported_type', message: `نوع الملف ${prepared.mimeType} غير مدعوم` }, 400)
   }
@@ -265,6 +295,25 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
       // Fallback to PaddleOCR · returns raw text only · we wrap in a minimal envelope
       const paddleText = await paddleOcrFallback(prepared.fileBase64, prepared.mimeType)
       if (paddleText) {
+        const fallbackDetection = detectBankStatement({ fileName, mimeType: prepared.mimeType, text: paddleText })
+        if (fallbackDetection.isBankStatement) {
+          await logBankStatementBlockedAttempt({
+            prisma,
+            orgId,
+            userId: auth?.userId,
+            source: 'agent.extract_document.paddle_detection',
+            entityType: 'Document',
+            reasons: fallbackDetection.reasons,
+            metadata: { fileName: fileName || null, target },
+          })
+          return c.json({
+            ...bankStatementBlockedResponse(fallbackDetection.reasons),
+            kind: 'unknown',
+            confidence: 0.5,
+            warnings: ['Bank statement auto-create blocked.'],
+            _meta: { model: 'paddle-ocr-fallback', source: 'fallback', target },
+          })
+        }
         await logAiUsage({
           orgId, userId: auth?.userId,
           endpoint: '/api/agent/extract-document', model: 'paddle-ocr-fallback',
@@ -315,6 +364,43 @@ agentExtractRoutes.post('/extract-document', zValidator('json', extractSchema), 
     }
     if (prepared.warnings.length) {
       parsed.warnings = [...(parsed.warnings || []), ...prepared.warnings]
+    }
+    const postDetection = detectBankStatement({
+      fileName,
+      mimeType: prepared.mimeType,
+      text: decodedText,
+      extracted: parsed,
+    })
+    if (postDetection.isBankStatement) {
+      await logBankStatementBlockedAttempt({
+        prisma,
+        orgId,
+        userId: auth?.userId,
+        source: 'agent.extract_document.post_detection',
+        entityType: 'Document',
+        reasons: postDetection.reasons,
+        metadata: { fileName: fileName || null, target },
+      })
+      return c.json({
+        ...bankStatementBlockedResponse(postDetection.reasons),
+        kind: 'unknown',
+        confidence: parsed?.confidence ?? 1,
+        warnings: [
+          ...(Array.isArray(parsed?.warnings) ? parsed.warnings : []),
+          'Bank statement auto-create blocked.',
+        ],
+        _meta: {
+          model: usedModel,
+          cost: cost.toFixed(6),
+          source: resolved.source,
+          target,
+          file: {
+            originalMimeType,
+            mimeType: prepared.mimeType,
+            converted: prepared.converted,
+          },
+        },
+      })
     }
 
     await logAiUsage({

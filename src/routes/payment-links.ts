@@ -14,7 +14,14 @@ import { prisma } from '../db.js'
 export const paymentLinksRoutes = new Hono()
 
 interface PaymentSettings {
-  stripe?: { enabled?: boolean; publishableKey?: string; secretKey?: string }
+  stripe?: {
+    enabled?: boolean
+    publishableKey?: string
+    secretKey?: string
+    accessToken?: string
+    connectedAccountId?: string
+    mode?: 'live' | 'test'
+  }
   paypal?: { enabled?: boolean; clientId?: string; clientSecret?: string; mode?: 'live' | 'sandbox' }
   moyasar?: { enabled?: boolean; publishableKey?: string; secretKey?: string }
 }
@@ -151,8 +158,14 @@ paymentLinksRoutes.post('/invoice/:id', async (c) => {
   try {
     let result
     if (chosen === 'stripe') {
-      if (!settings.stripe?.secretKey) return c.json({ error: 'stripe_not_configured' }, 400)
-      result = await createStripeLink(settings.stripe.secretKey, {
+      const stripeCredential = settings.stripe?.accessToken || settings.stripe?.secretKey
+      if (!stripeCredential) {
+        return c.json({
+          error: 'stripe_not_configured',
+          message: 'Stripe غير مربوط. اربطه من الإعدادات أو أضف مفتاح Stripe في إعدادات الدفع.',
+        }, 400)
+      }
+      result = await createStripeLink(stripeCredential, {
         amount: remaining, currency: invoice.currency, description,
         invoiceNumber: invoice.invoiceNumber, orgId, invoiceId: id,
       })
