@@ -216,6 +216,7 @@ model Account {
   code              String // 1000 · 1100 · etc
   name              String
   nameAr            String?
+  invoiceLines      InvoiceLine[]
   type              AccountType
   subtype           String? // bank · receivable · payable · ...
   parentId          String?
@@ -527,11 +528,13 @@ model InvoiceLine {
   unitPrice   Decimal @db.Decimal(18, 4)
   discount    Decimal @default(0) @db.Decimal(18, 4)
   taxRateId   String?
+  accountId   String? // revenue account · required before approval (non-DRAFT)
   subtotal    Decimal @db.Decimal(18, 4)
 
   invoice         Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   product         Product?         @relation(fields: [productId], references: [id])
   taxRate         TaxRate?         @relation(fields: [taxRateId], references: [id])
+  account         Account?         @relation(fields: [accountId], references: [id])
   creditNoteLines CreditNoteLine[]
 }
 

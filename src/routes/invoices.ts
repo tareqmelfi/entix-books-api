@@ -13,6 +13,7 @@ const lineSchema = z.object({
   unitPrice: z.coerce.number().min(0),
   discount: z.coerce.number().min(0).default(0),
   taxRateId: z.string().optional().nullable(),
+  accountId: z.string().optional().nullable(), // revenue account · enforced for non-DRAFT
   // Numeric fallback (fraction · 0.15 = 15%) when FE sends no taxRateId — fixes VAT silently saved as 0
   taxRate: z.coerce.number().min(0).max(1).optional(),
 })
@@ -64,6 +65,7 @@ async function calcTotals(lines: z.infer<typeof lineSchema>[], orgId: string) {
       unitPrice: new Prisma.Decimal(l.unitPrice),
       discount: new Prisma.Decimal(l.discount || 0),
       taxRateId: l.taxRateId || (numericRate > 0 ? rateIdByValue.get(numericRate) || null : null),
+      accountId: l.accountId || null,
       subtotal: new Prisma.Decimal(lineSubtotal + lineTax),
     }
   })
@@ -80,7 +82,21 @@ async function calcTotals(lines: z.infer<typeof lineSchema>[], orgId: string) {
 async function nextInvoiceNumber(orgId: string, contactId?: string | null): Promise<string> {
   // Use org's numbering settings · falls back to defaults
   const { nextInvoiceNumber: nextFromSettings } = await import('../lib/numbering.js')
-  return nextFromSettings(orgId, contactId)
+  const base = await nextFromSettings(orgId, contactId)
+  // Spaced, non-guessable sequence: last used trailing number + random gap (11-93)
+  const m = base.match(/^(.*?)(\d{3,})$/)
+  if (!m) return base
+  const [, prefix, seqStr] = m
+  const width = seqStr.length
+  const last = await prisma.invoice.findFirst({
+    where: { orgId, invoiceNumber: { startsWith: prefix } },
+    orderBy: { createdAt: 'desc' },
+    select: { invoiceNumber: true },
+  })
+  const lastSeq = last?.invoiceNumber?.match(/(\d+)$/)?.[1]
+  const gap = 11 + Math.floor(Math.random() * 83)
+  const seq = lastSeq ? parseInt(lastSeq, 10) + gap : 1000 + Math.floor(Math.random() * 7000)
+  return prefix + String(seq).padStart(width, '0')
 }
 
 // GET /invoices/_/next-number · returns the next invoice number without consuming it
@@ -148,6 +164,11 @@ invoicesRoutes.post('/', zValidator('json', invoiceSchema), async (c) => {
   const contact = await prisma.contact.findFirst({ where: { id: data.contactId, orgId } })
   if (!contact) return c.json({ error: 'invalid contact' }, 400)
 
+  // Accounting integrity: every line must carry a revenue account before the invoice leaves DRAFT
+  if (data.status && data.status !== 'DRAFT' && data.lines.some((l) => !l.accountId)) {
+    return c.json({ error: 'line_account_required', message: 'لا يمكن اعتماد الفاتورة: اختر حساب الإيراد لكل بند أولاً.' }, 400)
+  }
+
   const totals = await calcTotals(data.lines, orgId)
   const number = data.invoiceNumber || (await nextInvoiceNumber(orgId, data.contactId))
   const duplicate = await prisma.invoice.findFirst({
@@ -203,6 +224,16 @@ invoicesRoutes.patch('/:id', zValidator('json', invoiceSchema.partial()), async 
       select: { id: true },
     })
     if (duplicate) return c.json({ error: 'duplicate_invoice_number', message: 'رقم الفاتورة مستخدم مسبقاً داخل هذه الشركة.' }, 409)
+  }
+
+  // Accounting integrity: leaving DRAFT (or staying non-DRAFT with new lines) requires an account on every line
+  const effectiveStatus = data.status ?? exists.status
+  if (effectiveStatus !== 'DRAFT') {
+    const linesToCheck: Array<{ accountId?: string | null }> = data.lines
+      ?? (await prisma.invoiceLine.findMany({ where: { invoiceId: id }, select: { accountId: true } }))
+    if (linesToCheck.some((l) => !l.accountId)) {
+      return c.json({ error: 'line_account_required', message: 'لا يمكن اعتماد الفاتورة: اختر حساب الإيراد لكل بند أولاً.' }, 400)
+    }
   }
 
   // Recompute totals if lines changed
