@@ -193,6 +193,43 @@ orgsRoutes.patch('/:id', zValidator('json', updateOrgSchema), async (c) => {
   return c.json({ ...org, role: m.role })
 })
 
+// DELETE /orgs/:id — destructive org removal (OWNER only)
+const deleteOrgSchema = z.object({
+  confirmName: z.string().min(1),
+})
+
+orgsRoutes.delete('/:id', zValidator('json', deleteOrgSchema), async (c) => {
+  const auth = c.get('auth')
+  const orgId = c.req.param('id')
+  const { confirmName } = c.req.valid('json')
+
+  const membership = await prisma.orgMembership.findUnique({
+    where: { userId_orgId: { userId: auth.userId, orgId } },
+    include: { org: true },
+  })
+  if (!membership) return c.json({ error: 'not_a_member' }, 403)
+  if (membership.role !== 'OWNER') return c.json({ error: 'owner_required', message: 'Only the owner can delete a company.' }, 403)
+
+  const org = membership.org
+  const normalizedConfirm = confirmName.trim()
+  if (normalizedConfirm !== org.name && normalizedConfirm !== org.slug) {
+    return c.json({ error: 'confirmation_mismatch', message: 'Type the company name or slug exactly to delete it.' }, 400)
+  }
+
+  const userMemberships = await prisma.orgMembership.findMany({
+    where: { userId: auth.userId },
+    select: { orgId: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  if (userMemberships.length <= 1) {
+    return c.json({ error: 'last_org', message: 'Create or switch to another company before deleting the last company on this account.' }, 400)
+  }
+
+  const nextOrgId = userMemberships.find((m) => m.orgId !== orgId)?.orgId || null
+  await prisma.organization.delete({ where: { id: orgId } })
+  return c.json({ ok: true, deletedOrgId: orgId, nextOrgId })
+})
+
 // ── Team management · invite by email + role + remove ─────────────────────
 const inviteSchema = z.object({
   email: z.string().email(),
