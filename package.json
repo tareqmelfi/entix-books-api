@@ -9,13 +9,15 @@
     "test": "tsx --test src/**/*.test.ts",
     "start": "node dist/server.js",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate deploy",
+    "prisma:migrate": "npm run db:check:connect && prisma migrate deploy",
     "prisma:dev-migrate": "prisma migrate dev",
     "seed:demo": "tsx src/scripts/seed-demo.ts",
     "seed:demo:reset": "tsx src/scripts/seed-demo.ts $1 --reset",
     "upsert:snbl-invoice": "tsx src/scripts/upsert-snbl-stripe-invoice.ts",
     "bootstrap:owner-orgs": "tsx src/scripts/ensure-owner-orgs.ts",
-    "bootstrap:owner-orgs:dry-run": "tsx src/scripts/ensure-owner-orgs.ts --dry-run"
+    "bootstrap:owner-orgs:dry-run": "tsx src/scripts/ensure-owner-orgs.ts --dry-run",
+    "db:check": "tsx src/scripts/db-connection-check.ts",
+    "db:check:connect": "tsx src/scripts/db-connection-check.ts --connect-only"
   },
   "dependencies": {
     "@hono/node-server": "1.19.14",
@@ -23,14 +25,14 @@
     "@prisma/client": "5.22.0",
     "better-auth": "1.6.11",
     "heic-convert": "^2.1.0",
-    "hono": "4.12.19",
+    "hono": "4.12.23",
     "sharp": "^0.34.5",
     "zod": "3.23.8"
   },
   "devDependencies": {
     "@types/node": "22.10.2",
     "prisma": "5.22.0",
-    "tsx": "4.19.2",
+    "tsx": "4.22.4",
     "typescript": "5.7.2"
   },
   "engines": {
