@@ -509,6 +509,7 @@ model Invoice {
 
 enum InvoiceStatus {
   DRAFT
+  APPROVED
   SENT
   VIEWED
   PAID

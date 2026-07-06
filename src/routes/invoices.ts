@@ -13,12 +13,14 @@ const lineSchema = z.object({
   unitPrice: z.coerce.number().min(0),
   discount: z.coerce.number().min(0).default(0),
   taxRateId: z.string().optional().nullable(),
+  // Numeric fallback (fraction · 0.15 = 15%) when FE sends no taxRateId — fixes VAT silently saved as 0
+  taxRate: z.coerce.number().min(0).max(1).optional(),
 })
 
 const invoiceSchema = z.object({
   contactId: z.string(),
   invoiceNumber: z.string().optional(), // auto-generated if missing
-  status: z.enum(['DRAFT', 'SENT', 'VIEWED', 'PAID', 'PARTIAL', 'OVERDUE', 'CANCELLED']).default('DRAFT'),
+  status: z.enum(['DRAFT', 'APPROVED', 'SENT', 'VIEWED', 'PAID', 'PARTIAL', 'OVERDUE', 'CANCELLED']).default('DRAFT'),
   issueDate: z.string().transform((s) => new Date(s)),
   dueDate: z.string().transform((s) => new Date(s)),
   currency: z.string().length(3).default('SAR'),
@@ -36,12 +38,21 @@ async function calcTotals(lines: z.infer<typeof lineSchema>[], orgId: string) {
     rates.forEach((r) => taxRateMap.set(r.id, Number(r.rate)))
   }
 
+  // Best-effort: link numeric rates to the org's TaxRate records so line-level relations stay meaningful
+  const numericRates = [...new Set(lines.filter((l) => !l.taxRateId && typeof l.taxRate === 'number' && l.taxRate > 0).map((l) => l.taxRate as number))]
+  const rateIdByValue = new Map<number, string>()
+  for (const r of numericRates) {
+    const rec = await prisma.taxRate.findFirst({ where: { orgId, rate: r } })
+    if (rec) rateIdByValue.set(r, rec.id)
+  }
+
   let subtotal = 0
   let taxTotal = 0
   let discountTotal = 0
   const computedLines = lines.map((l) => {
     const lineSubtotal = l.quantity * l.unitPrice - (l.discount || 0)
-    const taxRate = l.taxRateId ? taxRateMap.get(l.taxRateId) || 0 : 0
+    const numericRate = typeof l.taxRate === 'number' ? l.taxRate : 0
+    const taxRate = l.taxRateId ? taxRateMap.get(l.taxRateId) || 0 : numericRate
     const lineTax = lineSubtotal * taxRate
     subtotal += lineSubtotal
     taxTotal += lineTax
@@ -52,7 +63,7 @@ async function calcTotals(lines: z.infer<typeof lineSchema>[], orgId: string) {
       quantity: new Prisma.Decimal(l.quantity),
       unitPrice: new Prisma.Decimal(l.unitPrice),
       discount: new Prisma.Decimal(l.discount || 0),
-      taxRateId: l.taxRateId || null,
+      taxRateId: l.taxRateId || (numericRate > 0 ? rateIdByValue.get(numericRate) || null : null),
       subtotal: new Prisma.Decimal(lineSubtotal + lineTax),
     }
   })
