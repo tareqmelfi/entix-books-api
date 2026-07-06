@@ -174,10 +174,11 @@ app.route('/api/ai-billing', aiBillingRoutes)
 // ── Error handler ──────────────────────────────────────────────────────────
 app.onError((err, c) => {
   console.error('[error]', err)
+  const exposeDetail = process.env.NODE_ENV !== 'production'
   return c.json(
     {
       error: 'internal_error',
-      detail: err.message, // exposed temporarily for debugging UX-184
+      detail: exposeDetail ? err.message : undefined,
     },
     500,
   )
