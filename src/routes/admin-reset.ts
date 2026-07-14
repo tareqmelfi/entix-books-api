@@ -14,6 +14,16 @@ const RATE_LIMIT_MAX = 5
 const RATE_LIMIT_WINDOW_MS = 60_000
 const rateBuckets = new Map<string, { count: number; windowStart: number }>()
 
+// Periodic cleanup of expired buckets to prevent unbounded memory growth
+setInterval(() => {
+  const now = Date.now()
+  for (const [ip, bucket] of rateBuckets) {
+    if (now - bucket.windowStart >= RATE_LIMIT_WINDOW_MS) {
+      rateBuckets.delete(ip)
+    }
+  }
+}, RATE_LIMIT_WINDOW_MS * 2).unref()
+
 function isRateLimited(ip: string): boolean {
   const now = Date.now()
   const bucket = rateBuckets.get(ip)
@@ -26,9 +36,12 @@ function isRateLimited(ip: string): boolean {
 }
 
 adminResetRoutes.post('/reset-password', async (c) => {
+  // cf-connecting-ip is set by Cloudflare and cannot be spoofed by clients.
+  // For x-forwarded-for, take the LAST hop (appended by our trusted proxy).
   const ip =
-    c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
+    c.req.header('cf-connecting-ip') ||
     c.req.header('x-real-ip') ||
+    c.req.header('x-forwarded-for')?.split(',').pop()?.trim() ||
     'unknown'
   if (isRateLimited(ip)) {
     return c.json({ error: 'too_many_requests' }, 429)
