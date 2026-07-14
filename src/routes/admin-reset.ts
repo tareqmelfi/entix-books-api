@@ -25,9 +25,9 @@ adminResetRoutes.post('/reset-password', async (c) => {
   const user = await prisma.user.findUnique({ where: { email } })
   if (!user) return c.json({ error: 'user_not_found' }, 404)
 
-  // Use better-auth's internal hashPassword via $context
-  const ctx: any = (auth as any).$context
-  const hash = await (ctx.password ? ctx.password.hash(newPassword) : (ctx as any).password.hash(newPassword))
+  // Use better-auth's internal hashPassword via $context (it is a Promise — must await)
+  const ctx: any = await (auth as any).$context
+  const hash: string = await ctx.password.hash(newPassword)
 
   // Find or create the email/password authAccount
   const existing = await prisma.authAccount.findFirst({
