@@ -55,7 +55,13 @@ adminResetRoutes.post('/reset-password', async (c) => {
   let body: any
   try { body = await c.req.json() } catch { return c.json({ error: 'invalid_body' }, 400) }
   const { email, newPassword } = body || {}
-  if (!email || !newPassword || typeof newPassword !== 'string' || newPassword.length < 8) {
+  if (
+    !email ||
+    typeof email !== 'string' ||
+    !newPassword ||
+    typeof newPassword !== 'string' ||
+    newPassword.length < 8
+  ) {
     return c.json({ error: 'email_and_8char_password_required' }, 400)
   }
 
